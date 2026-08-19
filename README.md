@@ -6,7 +6,7 @@
     <a href="https://github.com/RandomLinoge/OpenPGP-Quantum-Guard">
       <img src="https://img.shields.io/badge/Version-1.0.0_rc1-darkblue">
         <img src="https://img.shields.io/badge/Release%20Date-August%202026-blue">
-  <img src="https://img.shields.io/badge/powershell-100%25-blue?style=plastic">
+  <img src="https://img.shields.io/badge/powershell-100%25-blue">
     </a>
   </p>
 </p>
