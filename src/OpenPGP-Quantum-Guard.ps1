@@ -23,14 +23,10 @@ try {
     [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
 } catch { }
 
-# =============================================================================
-# RUNTIME STATE AND SAFE DEFAULTS
-# Loaded configuration replaces these values during startup. Repository-relative
-# folders allow a clean checkout to run without exposing workstation paths.
-# =============================================================================
-$script:IdentityFingerprint = ""
-$script:ExpectedUidHint = ""
-$script:DefaultStartFolder = Join-Path $PSScriptRoot "data"
+# === CONFIG ===
+$script:IdentityFingerprint = "<OPENPGP_FINGERPRINT>"
+$script:ExpectedUidHint = "Example Researcher <researcher@example.invalid>"
+$script:DefaultStartFolder = Join-Path $PSScriptRoot "workspace"
 $script:OutputFolder = ""
 $script:GpgExecutable = ""
 $script:GpgHome = ""
@@ -40,10 +36,9 @@ $script:DefaultKeyExpiry = "2y"
 $script:AutoTrustGeneratedKeys = $true
 $script:KeySelectableRequiresUltimateTrust = $false
 $script:PreferKyberHybridSubkeys = $true
-$script:RequirePqcEncryption = $true
 $script:OutputMode = "Shareable" # Private or Shareable. Default is public-safe Shareable mode.
-$script:AdminPassword = $null
-$script:UidGatePassphrase = $null
+$script:AdminPassword = "<CONFIGURE_AT_RUNTIME>"
+$script:UidGatePassphrase = "<CONFIGURE_AT_RUNTIME>"
 $script:DrainQueuedMenuKeys = $true # Prevent delayed key-repeat drift in arrow menus
 $script:QuitGuardInstalled = $false
 $script:QuitGuardHandler = $null
@@ -52,10 +47,22 @@ $script:PreviousTreatControlCAsInput = $null
 # Tool branding.
 $script:ToolName = "OpenPGP Quantum Guard"
 $script:ToolSubtitle = "PQC-aware OpenPGP file protection"
-# Legacy custom-header support remains disabled for compatibility. Current
-# builds use the single maintained embedded boot mark and compact menu panel.
-$script:ShowCustomAnsiHeader = $false
-$script:CustomAnsiHeader = ""
+# Optional custom ANSI / ASCII header.
+# Paste your ANSI header between the @' and '@ markers, then set ShowCustomAnsiHeader to $true.
+# Keep it reasonably narrow, around 80-100 columns, for best console layout.
+$script:ShowCustomAnsiHeader = $true
+$script:CustomAnsiHeader = @'
+ _____             _____ _____ _____
+|     |___ ___ ___|  _  |   __|  _  |
+|  |  | . | -_|   |   __|  |  |   __|
+|_____|  _|___|_|_|__|  |_____|__|
+      |_|
+ _____             _                _____               _
+|     |_ _ ___ ___| |_ _ _ _____   |   __|_ _ ___ ___ _| |
+|  |  | | | .'|   |  _| | |     |  |  |  | | | .'|  _| . |
+|__  _|___|__,|_|_|_| |___|_|_|_|  |_____|___|__,|_| |___|
+   |__|
+'@
 
 # No More Secrets style reveal effect. Purely cosmetic.
 $script:EnableNoMoreSecretsEffect = $true
@@ -309,7 +316,7 @@ function Write-Banner {
     Write-Host ""
 
     Write-ConsoleSegment -Text "  ║ " -ForegroundColor $script:UiBorderBlue
-    Write-ConsoleSegment -Text ("PQC-enabled OpenPGP operations".PadRight($inner)) -ForegroundColor $script:UiSilverBlue
+    Write-ConsoleSegment -Text ("Sealed by Bak3n3k0".PadRight($inner)) -ForegroundColor $script:UiSilverBlue
     Write-ConsoleSegment -Text " ║" -ForegroundColor $script:UiBorderBlue
     Write-Host ""
 
@@ -381,7 +388,7 @@ function Test-BlockedControlQuitKey {
 }
 
 $script:GpgPath = $null # v63: resolved after config is loaded
-$script:IdentityFingerprint = ""
+$script:IdentityFingerprint = "<OPENPGP_FINGERPRINT>"
 
 
 function Wait-User {
@@ -1655,7 +1662,7 @@ function Switch-ActiveFingerprintWorkflow {
     Write-Host ("Current: {0}" -f $script:IdentityFingerprint) -ForegroundColor $script:UiDimSilver
     Write-Host ("New    : {0}" -f $fp) -ForegroundColor $script:UiWhiteSilver
     if (-not (Read-YesNo "Are you sure you want to switch fingerprints?" $false)) { return }
-    $script:IdentityFingerprint = Normalize-Fingerprint $fp
+$script:IdentityFingerprint = "<OPENPGP_FINGERPRINT>"
     Write-Host "Active fingerprint switched." -ForegroundColor $script:UiWhiteSilver
     Wait-User
 }
@@ -1757,14 +1764,16 @@ function Convert-SecureInputToPlainText {
 
 function Request-AdminAccess {
     Write-Banner -Title "Admin settings"
-    Write-Host "These settings can change identity selection, exports, and output safety." -ForegroundColor Gray
+    Write-Host "Admin access is required for runtime settings." -ForegroundColor Gray
     Write-Host ""
-    Write-Host "This confirmation is a safety interlock, not authentication." -ForegroundColor $script:UiDimSilver
-    $confirmation = Read-Host 'Type ADMIN to continue'
-    if ($confirmation -ceq "ADMIN") { return $true }
+    $secure = Read-Host "Password" -AsSecureString
+    $plain = Convert-SecureInputToPlainText -SecureText $secure
+    if ($plain -ceq $script:AdminPassword) {
+        return $true
+    }
 
     Write-Host ""
-    Write-Host "Admin settings cancelled." -ForegroundColor $script:UiLightBlue
+    Write-Host "Access denied." -ForegroundColor $script:UiLightBlue
     Wait-User
     return $false
 }
@@ -2417,7 +2426,7 @@ function Show-AboutDashboard {
     foreach ($seg in (New-GradientSegments -Text $title -StartRgb $script:GradientBlueStart -EndRgb $script:GradientBlueEnd -Bold)) {
         Write-ConsoleSegment -Text $seg.Text -ForegroundColor $seg.Color -Bold
     }
-    $tag = "  PQC-enabled OpenPGP operations"
+    $tag = "  Sealed by Bak3n3k0"
     Write-ConsoleSegment -Text $tag -ForegroundColor $script:UiSilverBlue -Bold
     $pad = ($w - 4) - $title.Length - $tag.Length
     if ($pad -gt 0) { Write-ConsoleSegment -Text (" " * $pad) -ForegroundColor $script:UiDimSilver }
@@ -2448,9 +2457,9 @@ function Show-AboutDashboard {
     )
     Write-AboutRuleCompact -Width $w
     Write-AboutRowCompact -Width $w -Label "Operator" -TextColor $script:UiSilverBlue -Lines @(
-        "OpenPGP Quantum Guard: experimental operator tooling for GnuPG,",
-        "builder, and practical cryptography enthusiast focused on",
-        "operational security and verifiable OpenPGP identity."
+        "Bak3n3k0.",
+        "Security researcher, builder, hacker. Practical cryptography lab.",
+        "GitHub: https://github.com/RandomLinoge"
     )
     Write-AboutRuleCompact -Width $w
     Write-AboutRowCompact -Width $w -Label "Security" -TextColor $script:UiDimSilver -Lines @(
@@ -3422,7 +3431,7 @@ function New-AboutRightLines {
 
     $lines += @(New-AboutPairRenderLines -Label "Security" -TextWidth $textWidth -TextLines @(
         "The script does not store private-key passphrases. GnuPG and pinentry handle private-key unlock prompts only when a crypto operation needs them.",
-        "Admin settings require an explicit ADMIN confirmation because they change operational behavior and defaults."
+        "Admin settings remain password-gated because they change operational behavior and defaults."
     ))
     $lines += (New-MenuRenderLine -Text $rule -Color $script:UiBorderBlue)
     $lines += (New-MenuRenderLine -Segments @(New-GradientSegments -Text "Press ENTER to return." -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold))
@@ -3719,8 +3728,9 @@ function Get-AboutV55LeftLines {
         "Keep identity, output mode, and key choice visible."
     ))
     $lines += @(New-AboutV55SectionLines -Width 58 -Label "Operator" -TextLines @(
-        "Maintained as an open cryptography research project.",
-        "CISO, researcher, builder, practical crypto lab."
+        "Bak3n3k0.",
+        "Security researcher, builder, hacker. Practical cryptography lab.",
+        "GitHub: https://github.com/RandomLinoge"
     ))
     $lines += @(New-AboutV55SectionLines -Width 58 -Label "Security" -TextLines @(
         "Private-key passphrases are not stored by this script.",
@@ -3896,7 +3906,7 @@ function Get-AboutV56LeftLines {
     $lines += New-AboutLineV56 "    Protect files and text with OpenPGP." $script:UiSilverBlue
     $lines += New-AboutLineV56 "    Keep identity and output mode visible." $script:UiSilverBlue
     $lines += New-AboutLineV56 "  Operator" $script:UiWhiteSilver -Gradient -Bold
-    $lines += New-AboutLineV56 "    Maintained as an open cryptography research project." $script:UiSilverBlue
+    $lines += New-AboutLineV56 "    Bak3n3k0." $script:UiSilverBlue
     $lines += New-AboutLineV56 "    Practical crypto lab for real workflows." $script:UiSilverBlue
     $lines += New-AboutLineV56 "  Security" $script:UiWhiteSilver -Gradient -Bold
     $lines += New-AboutLineV56 "    Private-key passphrases are not stored." $script:UiSilverBlue
@@ -4236,7 +4246,7 @@ function Show-StartupBootScreenV51 {
         Start-Sleep -Milliseconds 8
     }
     Write-Host ""
-    Write-GradientFixedLineV56 -Text "  OpenPGP Quantum Guard boot sequence" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
+    Write-GradientFixedLineV56 -Text "  Sealed by Bak3n3k0 | OpenPGP Quantum Guard boot sequence" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
     Write-GradientFixedLineV56 -Text "  Loading runtime, GnuPG probe, trust inventory, strength profile, file browser." -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
     Write-Host ""
     $progressRow = 0
@@ -4263,7 +4273,7 @@ function Get-AboutV57LeftLines {
     $lines = @()
     $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text "OpenPGP Quantum Guard" -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text "PQC-enabled OpenPGP operations" -Width $w -Color $script:UiSilverBlue
+    $lines += New-V57BoxLine -Text "Sealed by Bak3n3k0" -Width $w -Color $script:UiSilverBlue
     $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text ("FPR  : {0}" -f $fpr) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57BoxLine -Text ("Mode : {0}  GnuPG: {1}" -f $modeText, $gpgState) -Width $w -Color $script:UiSilverBlue
@@ -4277,7 +4287,7 @@ function Get-AboutV57LeftLines {
         "Designed for local file protection, lab testing, and safe screenshots."
     ))
     $lines += @(New-V58SectionBox -Width $w -Title "Operator" -Lines @(
-        "Maintained as an open cryptography research project.",
+        "Bak3n3k0.",
         "Practical crypto lab for real workflows, not blind magic.",
         "The truth is in the logs; the proof is in the keys."
     ))
@@ -4486,7 +4496,7 @@ function Get-AboutV61LeftLines {
     $lines = @()
     $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text "OpenPGP Quantum Guard" -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text "PQC-enabled OpenPGP operations" -Width $w -Color $script:UiSilverBlue
+    $lines += New-V57BoxLine -Text "Sealed by Bak3n3k0" -Width $w -Color $script:UiSilverBlue
     $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text ("FPR  : {0}" -f $fpr) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57BoxLine -Text ("Mode : {0}  GnuPG: {1}" -f $modeText, $gpgState) -Width $w -Color $script:UiSilverBlue
@@ -4500,7 +4510,7 @@ function Get-AboutV61LeftLines {
         "Active identity, score, and flow stay visible."
     ))
     $lines += @(New-V61Box -Width $w -Title "Operator" -Lines @(
-        "Built as an open cryptography research project.",
+        "Built for [[Bak3n3k0]].",
         "Practical crypto lab, not blind magic.",
         "Motto: **the truth is in the logs**."
     ))
@@ -4654,7 +4664,7 @@ function Get-CompactMainLeftLines {
     $w = 60
     $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
     $lines += New-NmsSentenceGradientLineV62 -Text "OpenPGP Quantum Guard" -Seed 1 -Reveal 0.78 -Bold -Selected
-    $lines += New-NmsSentenceLineV62 -Text "  │ PQC-enabled OpenPGP operations                      │" -Color $script:UiSilverBlue -Seed 2 -Reveal 0.78 -Selected
+    $lines += New-NmsSentenceLineV62 -Text "  │ Sealed by Bak3n3k0                                  │" -Color $script:UiSilverBlue -Seed 2 -Reveal 0.78 -Selected
     $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text ("FPR   : {0}" -f $fpr) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57BoxLine -Text $modeLine -Width $w -Color $script:UiSilverBlue
@@ -4817,7 +4827,7 @@ function Main-Menu {
             (New-ConsoleMenuItem -Label "Generate new key" -Value "GenerateKey" -Hint "Create email-compatible, PQC, or manually mixed identities." -Color $script:UiSilverBlue -Shortcut "7"),
             (New-ConsoleMenuItem -Label "Export keys" -Value "Export" -Hint "Export public certificates or protected secret material." -Color $script:UiWhiteSilver -Shortcut "8"),
             (New-ConsoleMenuItem -Label "About" -Value "About" -Hint "Open the operator notes, scoring rules, controls and security model." -Color $script:UiSilverBlue -Shortcut "9"),
-            (New-ConsoleMenuItem -Label "Admin settings" -Value "Admin" -Hint "Safety-confirmed settings, output mode, identity administration and defaults." -Color $script:UiMidBlue -Shortcut "0"),
+            (New-ConsoleMenuItem -Label "Admin settings" -Value "Admin" -Hint "Password-gated settings, output mode, identity admin and defaults." -Color $script:UiMidBlue -Shortcut "0"),
             (New-ConsoleMenuItem -Label "Quit" -Value "Quit" -Hint "Close the tool cleanly." -Color $script:UiWhiteSilver -Shortcut "q")
         )
         $choice = Invoke-MainMenuRightPanel -HeaderLines $header -Items $items
@@ -4895,7 +4905,6 @@ function New-DefaultConfigObjectV63 {
         ExpectedUidHint = ""
         OutputMode = "Shareable"
         PreferKyberHybridSubkeys = $true
-        RequirePqcEncryption = $true
         DefaultKeyProfile = "LOCAL_PQC_KYBER1024_X448"
         DefaultKeyExpiry = "2y"
         AutoTrustGeneratedKeys = $true
@@ -4928,13 +4937,12 @@ function Ensure-DirectoryV63 {
 
 function Apply-ConfigObjectV63 {
     param($Config)
-    $script:DefaultStartFolder = [string](Get-ConfigPropertyV63 -Config $Config -Name "PgpFolder" -Default $script:DefaultStartFolder)
+$script:DefaultStartFolder = [string](Get-ConfigPropertyV63 -Config $Config -Name "PgpFolder" -Default $script:DefaultStartFolder)
     $script:OutputFolder = [string](Get-ConfigPropertyV63 -Config $Config -Name "OutputFolder" -Default $script:OutputFolder)
     $script:GpgExecutable = [string](Get-ConfigPropertyV63 -Config $Config -Name "GpgPath" -Default $script:GpgExecutable)
     $script:GpgHome = [string](Get-ConfigPropertyV63 -Config $Config -Name "GpgHome" -Default $script:GpgHome)
     $script:OutputMode = [string](Get-ConfigPropertyV63 -Config $Config -Name "OutputMode" -Default $script:OutputMode)
     $script:PreferKyberHybridSubkeys = [bool](Get-ConfigPropertyV63 -Config $Config -Name "PreferKyberHybridSubkeys" -Default $script:PreferKyberHybridSubkeys)
-    $script:RequirePqcEncryption = [bool](Get-ConfigPropertyV63 -Config $Config -Name "RequirePqcEncryption" -Default $true)
     $script:DefaultKeyProfile = [string](Get-ConfigPropertyV63 -Config $Config -Name "DefaultKeyProfile" -Default "LOCAL_PQC_KYBER1024_X448")
     $script:DefaultKeyExpiry = [string](Get-ConfigPropertyV63 -Config $Config -Name "DefaultKeyExpiry" -Default "2y")
     $script:AutoTrustGeneratedKeys = [bool](Get-ConfigPropertyV63 -Config $Config -Name "AutoTrustGeneratedKeys" -Default $true)
@@ -4943,11 +4951,8 @@ function Apply-ConfigObjectV63 {
     $script:LiveNmsMenuEnabled = [bool](Get-ConfigPropertyV63 -Config $Config -Name "EnableLiveNmsMenu" -Default $true)
 
     $cfgFpr = [string](Get-ConfigPropertyV63 -Config $Config -Name "DefaultIdentityFingerprint" -Default "")
-    if ($cfgFpr -match '^<[^>]+>$') { $cfgFpr = "" }
-    $script:IdentityFingerprint = Normalize-Fingerprint $cfgFpr
-    $cfgUid = [string](Get-ConfigPropertyV63 -Config $Config -Name "ExpectedUidHint" -Default "")
-    if ($cfgUid -match '^Example Researcher\s*<researcher@example\.invalid>$') { $cfgUid = "" }
-    $script:ExpectedUidHint = $cfgUid
+$script:IdentityFingerprint = "<OPENPGP_FINGERPRINT>"
+$script:ExpectedUidHint = "Example Researcher <researcher@example.invalid>"
 
     if (-not [string]::IsNullOrWhiteSpace($script:GpgHome)) {
         Ensure-DirectoryV63 -Path $script:GpgHome -Label "GnuPG home"
@@ -5006,7 +5011,6 @@ function Save-Config {
         ExpectedUidHint = [string]$script:ExpectedUidHint
         OutputMode = [string]$script:OutputMode
         PreferKyberHybridSubkeys = [bool]$script:PreferKyberHybridSubkeys
-        RequirePqcEncryption = [bool]$script:RequirePqcEncryption
         DefaultKeyProfile = [string]$script:DefaultKeyProfile
         DefaultKeyExpiry = [string]$script:DefaultKeyExpiry
         AutoTrustGeneratedKeys = [bool]$script:AutoTrustGeneratedKeys
@@ -5417,8 +5421,8 @@ function Generate-PqcKeyWorkflow {
     }
 
     if (Read-YesNo "Use this key as the active default for this program?" ($failed.Count -eq 0)) {
-        $script:IdentityFingerprint = Normalize-Fingerprint $newFpr
-        $script:ExpectedUidHint = $uid
+$script:IdentityFingerprint = "<OPENPGP_FINGERPRINT>"
+$script:ExpectedUidHint = "Example Researcher <researcher@example.invalid>"
         Save-Config
         Write-Host "Active fingerprint saved to the config file." -ForegroundColor $script:UiWhiteSilver
     }
@@ -5476,8 +5480,8 @@ function Cycle-ActiveIdentityV44 {
     $match = @($keys | Where-Object { (Normalize-Fingerprint $_.Fingerprint) -eq (Normalize-Fingerprint $chosen) })
     if ($match.Count -eq 0) { return }
     $k = $match[0]
-    $script:IdentityFingerprint = Normalize-Fingerprint ([string]$k.Fingerprint)
-    $script:ExpectedUidHint = [string]$k.PrimaryUid
+$script:IdentityFingerprint = "<OPENPGP_FINGERPRINT>"
+$script:ExpectedUidHint = "Example Researcher <researcher@example.invalid>"
     Save-Config
     Write-Banner -Title "Active OpenPGP identity updated"
     Write-V46GradientWrappedText -Text ("Active: {0}  {1}" -f (Short-Fpr $script:IdentityFingerprint), $script:ExpectedUidHint) -Indent "  " -Width 110 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
@@ -5507,7 +5511,7 @@ function Initialize-ActiveIdentityV44 {
     if ($current.Count -gt 0) { return }
     $chosen = Select-PublicPrimaryFingerprint -Title "Choose default OpenPGP identity"
     if (-not [string]::IsNullOrWhiteSpace($chosen)) {
-        $script:IdentityFingerprint = Normalize-Fingerprint $chosen
+$script:IdentityFingerprint = "<OPENPGP_FINGERPRINT>"
         $chosenKey = @($selectable | Where-Object { (Normalize-Fingerprint $_.Fingerprint) -eq $script:IdentityFingerprint })
         if ($chosenKey.Count -gt 0) { $script:ExpectedUidHint = [string]$chosenKey[0].PrimaryUid }
         Save-Config
@@ -5543,10 +5547,6 @@ function Encrypt-FileWorkflow {
     $outPath = $defaultOut
     if (-not (Read-YesNo "Use this output path?" $true)) { $custom = (Read-Host "Output path").Trim('"'); if (-not [string]::IsNullOrWhiteSpace($custom)) { $outPath = $custom } }
     $gpgArgs = @("--yes", "--trust-model", "always")
-    # GnuPG 2.5+ can enforce that every recipient uses a composite
-    # Kyber/ML-KEM encryption key. Disable this policy in the config only when
-    # deliberately testing a classic compatibility profile.
-    if ([bool]$script:RequirePqcEncryption) { $gpgArgs += "--require-pqc-encryption" }
     if ($armor) { $gpgArgs += "--armor" }
     $gpgArgs += @("--encrypt", "--recipient", $recipient)
     if ($sign) { $gpgArgs += @("--sign", "--local-user", $script:IdentityFingerprint) }
@@ -5582,9 +5582,7 @@ function Encrypt-TextWorkflow {
     $tmpIn = Join-Path ([System.IO.Path]::GetTempPath()) ("oqg_plain_{0}.txt" -f ([guid]::NewGuid().ToString("N")))
     try {
         [System.IO.File]::WriteAllText($tmpIn, $plain, [System.Text.UTF8Encoding]::new($false))
-        $gpgArgs = @("--yes", "--trust-model", "always")
-        if ([bool]$script:RequirePqcEncryption) { $gpgArgs += "--require-pqc-encryption" }
-        $gpgArgs += @("--armor", "--encrypt", "--recipient", $recipient)
+        $gpgArgs = @("--yes", "--trust-model", "always", "--armor", "--encrypt", "--recipient", $recipient)
         if ($sign) { $gpgArgs += @("--sign", "--local-user", $script:IdentityFingerprint) }
         $gpgArgs += @("--output", $outPath, $tmpIn)
         Write-Host ""
@@ -5675,7 +5673,7 @@ $script:ToolVersion = "v67"
 $script:LeftMenuLogoLines = @()
 $script:BootMenuLogoLines = @()
 $script:BootMenuTitle = "OpenPGP Quantum Guard"
-$script:BootMenuSubtitle = "PQC-enabled OpenPGP operations"
+$script:BootMenuSubtitle = "Sealed by Bak3n3k0"
 $script:BootWaitForEnter = $true
 $script:BootLogoPath = ""
 $script:LeftMenuLogoPath = ""
@@ -5695,17 +5693,35 @@ function Get-DefaultLeftLogoPathV67 {
 }
 
 function Get-DefaultBootLogoTextV67 {
-    # One maintained boot logo lives in Get-DefaultBootLogoTextV71.
-    return (Get-DefaultBootLogoTextV71)
+@'
+    ▒█████   ██▓███  ▓█████  ███▄    █   ▄████  ██▓███   ▄████▄
+   ▒██▒  ██▒▓██░  ██▒▓█   ▀  ██ ▀█   █  ██▒ ▀█▒▓██░  ██▒▒██▀ ▀█
+   ▒██░  ██▒▓██░ ██▓▒▒███   ▓██  ▀█ ██▒▒██░▄▄▄░▓██░ ██▓▒▒▓█    ▄
+   ▒██   ██░▒██▄█▓▒ ▒▒▓█  ▄ ▓██▒  ▐▌██▒░▓█  ██▓▒██▄█▓▒ ▒▒▓▓▄ ▄██▒
+   ░ ████▓▒░▒██▒ ░  ░░▒████▒▒██░   ▓██░░▒▓███▀▒▒██▒ ░  ░▒ ▓███▀ ░
+   ░ ▒░▒░▒░ ▒▓▒░ ░  ░░░ ▒░ ░░ ▒░   ▒ ▒  ░▒   ▒ ▒▓▒░ ░  ░░ ░▒ ▒  ░
+     ░ ▒ ▒░ ░▒ ░      ░ ░  ░░ ░░   ░ ▒░  ░   ░ ░▒ ░       ░  ▒
+   ░ ░ ░ ▒  ░░          ░      ░   ░ ░ ░ ░   ░ ░░       ░
+       ░ ░              ░  ░         ░       ░          ░ ░
+
+       OPENPGP QUANTUM GUARD :: KYBER 1024 X448 DEFAULT
+'@
 }
 
 function Get-DefaultLeftLogoTextV67 {
 @'
 ╭──────────────────────────────╮
 │  OPENPGP QUANTUM GUARD       │
+│  LEFT MENU LOGO PLACEHOLDER   │
 ├──────────────────────────────┤
-│  ML-KEM composite encryption │
-│  GnuPG capability verified   │
+│  Replace this file with       │
+│  your own compact ASCII logo. │
+│                              │
+│  File:                        │
+│  logos\openpgp_quantum_guard_ │
+│  left_logo.txt                │
+├──────────────────────────────┤
+│  Sealed by Bak3n3k0           │
 ╰──────────────────────────────╯
 '@
 }
@@ -5803,7 +5819,6 @@ function New-DefaultConfigObjectV63 {
         ExpectedUidHint = ""
         OutputMode = "Shareable"
         PreferKyberHybridSubkeys = $true
-        RequirePqcEncryption = $true
         DefaultKeyProfile = "LOCAL_PQC_KYBER1024_X448"
         DefaultKeyExpiry = "2y"
         AutoTrustGeneratedKeys = $true
@@ -5811,7 +5826,7 @@ function New-DefaultConfigObjectV63 {
         EnableLiveNmsMenu = $true
         EnableNoMoreSecretsEffect = $true
         BootMenuTitle = "OpenPGP Quantum Guard"
-        BootMenuSubtitle = "PQC-enabled OpenPGP operations"
+        BootMenuSubtitle = "Sealed by Bak3n3k0"
         BootWaitForEnter = $true
         BootLogoPath = (Get-DefaultBootLogoPathV67)
         LeftMenuLogoPath = (Get-DefaultLeftLogoPathV67)
@@ -5822,13 +5837,12 @@ function New-DefaultConfigObjectV63 {
 function Apply-ConfigObjectV63 {
     param($Config)
 
-    $script:DefaultStartFolder = [string](Get-ConfigPropertyV63 -Config $Config -Name "PgpFolder" -Default $script:DefaultStartFolder)
+$script:DefaultStartFolder = [string](Get-ConfigPropertyV63 -Config $Config -Name "PgpFolder" -Default $script:DefaultStartFolder)
     $script:OutputFolder = [string](Get-ConfigPropertyV63 -Config $Config -Name "OutputFolder" -Default $script:OutputFolder)
     $script:GpgExecutable = [string](Get-ConfigPropertyV63 -Config $Config -Name "GpgPath" -Default $script:GpgExecutable)
     $script:GpgHome = [string](Get-ConfigPropertyV63 -Config $Config -Name "GpgHome" -Default $script:GpgHome)
     $script:OutputMode = [string](Get-ConfigPropertyV63 -Config $Config -Name "OutputMode" -Default $script:OutputMode)
     $script:PreferKyberHybridSubkeys = [bool](Get-ConfigPropertyV63 -Config $Config -Name "PreferKyberHybridSubkeys" -Default $script:PreferKyberHybridSubkeys)
-    $script:RequirePqcEncryption = [bool](Get-ConfigPropertyV63 -Config $Config -Name "RequirePqcEncryption" -Default $true)
     $script:DefaultKeyProfile = [string](Get-ConfigPropertyV63 -Config $Config -Name "DefaultKeyProfile" -Default "LOCAL_PQC_KYBER1024_X448")
     $script:DefaultKeyExpiry = [string](Get-ConfigPropertyV63 -Config $Config -Name "DefaultKeyExpiry" -Default "2y")
     $script:AutoTrustGeneratedKeys = [bool](Get-ConfigPropertyV63 -Config $Config -Name "AutoTrustGeneratedKeys" -Default $true)
@@ -5836,7 +5850,7 @@ function Apply-ConfigObjectV63 {
     $script:EnableNoMoreSecretsEffect = [bool](Get-ConfigPropertyV63 -Config $Config -Name "EnableNoMoreSecretsEffect" -Default $script:EnableNoMoreSecretsEffect)
     $script:LiveNmsMenuEnabled = [bool](Get-ConfigPropertyV63 -Config $Config -Name "EnableLiveNmsMenu" -Default $true)
     $script:BootMenuTitle = [string](Get-ConfigPropertyV63 -Config $Config -Name "BootMenuTitle" -Default "OpenPGP Quantum Guard")
-    $script:BootMenuSubtitle = [string](Get-ConfigPropertyV63 -Config $Config -Name "BootMenuSubtitle" -Default "PQC-enabled OpenPGP operations")
+    $script:BootMenuSubtitle = [string](Get-ConfigPropertyV63 -Config $Config -Name "BootMenuSubtitle" -Default "Sealed by Bak3n3k0")
     $script:BootWaitForEnter = [bool](Get-ConfigPropertyV63 -Config $Config -Name "BootWaitForEnter" -Default $true)
 
     $script:BootLogoPath = Resolve-LogoPathV67 -Path ([string](Get-ConfigPropertyV63 -Config $Config -Name "BootLogoPath" -Default (Get-DefaultBootLogoPathV67))) -DefaultPath (Get-DefaultBootLogoPathV67)
@@ -5850,11 +5864,8 @@ function Apply-ConfigObjectV63 {
     $script:LeftMenuLogoLines = @(Read-LogoFileLinesV67 -Path $script:LeftMenuLogoPath -FallbackText (Get-DefaultLeftLogoTextV67))
 
     $cfgFpr = [string](Get-ConfigPropertyV63 -Config $Config -Name "DefaultIdentityFingerprint" -Default "")
-    if ($cfgFpr -match '^<[^>]+>$') { $cfgFpr = "" }
-    $script:IdentityFingerprint = Normalize-Fingerprint $cfgFpr
-    $cfgUid = [string](Get-ConfigPropertyV63 -Config $Config -Name "ExpectedUidHint" -Default "")
-    if ($cfgUid -match '^Example Researcher\s*<researcher@example\.invalid>$') { $cfgUid = "" }
-    $script:ExpectedUidHint = $cfgUid
+$script:IdentityFingerprint = "<OPENPGP_FINGERPRINT>"
+$script:ExpectedUidHint = "Example Researcher <researcher@example.invalid>"
 
     if (-not [string]::IsNullOrWhiteSpace($script:GpgHome)) {
         Ensure-DirectoryV63 -Path $script:GpgHome -Label "GnuPG home"
@@ -5876,7 +5887,6 @@ function Save-Config {
         ExpectedUidHint = [string]$script:ExpectedUidHint
         OutputMode = [string]$script:OutputMode
         PreferKyberHybridSubkeys = [bool]$script:PreferKyberHybridSubkeys
-        RequirePqcEncryption = [bool]$script:RequirePqcEncryption
         DefaultKeyProfile = [string]$script:DefaultKeyProfile
         DefaultKeyExpiry = [string]$script:DefaultKeyExpiry
         AutoTrustGeneratedKeys = [bool]$script:AutoTrustGeneratedKeys
@@ -5970,7 +5980,7 @@ function Get-CompactMainLeftLines {
     $lines += @(New-LeftMenuLogoRenderLinesV65 -Width $w)
     $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "OpenPGP Quantum Guard" -Seed 101 -Reveal 0.78 -Selected) -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "PQC-enabled OpenPGP operations" -Seed 102 -Reveal 0.72) -Width $w -Color $script:UiSilverBlue
+    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Sealed by Bak3n3k0" -Seed 102 -Reveal 0.72) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text ("FPR   : {0}" -f $fpr) -Seed 103 -Reveal 0.72) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text $modeLine -Seed 104 -Reveal 0.72) -Width $w -Color $script:UiSilverBlue
@@ -6079,7 +6089,7 @@ function Initialize-ActiveIdentityV44 {
     if ($current.Count -gt 0) { return }
     $chosen = Select-PublicPrimaryFingerprint -Title "Choose default OpenPGP identity"
     if (-not [string]::IsNullOrWhiteSpace($chosen)) {
-        $script:IdentityFingerprint = Normalize-Fingerprint $chosen
+$script:IdentityFingerprint = "<OPENPGP_FINGERPRINT>"
         $chosenKey = @($selectable | Where-Object { (Normalize-Fingerprint $_.Fingerprint) -eq $script:IdentityFingerprint })
         if ($chosenKey.Count -gt 0) { $script:ExpectedUidHint = [string]$chosenKey[0].PrimaryUid }
         Save-Config
@@ -6128,7 +6138,7 @@ function Get-CompactLeftLogoTextV68 {
 ╭────────────────────────────╮
 │ OpenPGP Quantum Guard      │
 │ Kyber 1024 X448 default    │
-│ OpenPGP Quantum Guard      │
+│ Sealed by Bak3n3k0         │
 ╰────────────────────────────╯
 '@
 }
@@ -6239,7 +6249,7 @@ function Get-CompactMainLeftLines {
     $lines += @(New-LeftMenuLogoRenderLinesV65 -Width $w)
     $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "OpenPGP Quantum Guard" -Seed 101 -Reveal 0.94 -Selected) -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "PQC-enabled OpenPGP operations" -Seed 102 -Reveal 0.93 -Selected) -Width $w -Color $script:UiSilverBlue
+    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Sealed by Bak3n3k0" -Seed 102 -Reveal 0.93 -Selected) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text ("FPR   : {0}" -f $fpr) -Seed 103 -Reveal 0.91) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text $modeLine -Seed 104 -Reveal 0.91) -Width $w -Color $script:UiSilverBlue
@@ -6502,7 +6512,7 @@ function Get-CompactMainLeftLines {
     $lines += @(New-LeftMenuLogoRenderLinesV65 -Width $w)
     $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "OpenPGP Quantum Guard" -Seed 101 -Reveal 0.94 -Selected) -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "PQC-enabled OpenPGP operations" -Seed 102 -Reveal 0.93 -Selected) -Width $w -Color $script:UiSilverBlue
+    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Sealed by Bak3n3k0" -Seed 102 -Reveal 0.93 -Selected) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text ("FPR   : {0}" -f $fpr) -Seed 103 -Reveal 0.91) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text $modeLine -Seed 104 -Reveal 0.91) -Width $w -Color $script:UiSilverBlue
@@ -6511,7 +6521,7 @@ function Get-CompactMainLeftLines {
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "NMS   : live readable sentence layer" -Seed 107 -Reveal 0.89) -Width $w -Gradient -Bold
     $lines += New-V57TextLine (New-V57BoxBottom $w) $script:UiBorderBlue
     $lines += New-V57TextLine "" $script:UiDimSilver
-    $lines += New-NmsSentenceGradientLineV62 -Text ("  Build {0}: portable configuration" -f $script:ToolVersion) -Seed 108 -Reveal 0.90 -Bold
+    $lines += New-NmsSentenceGradientLineV62 -Text ("  Build {0}: ANSI logo restored" -f $script:ToolVersion) -Seed 108 -Reveal 0.90 -Bold
     $lines += New-NmsSentenceLineV62 -Text "  The original ANSI header is the left-menu default again." -Color $script:UiDimSilver -Seed 109 -Reveal 0.88
     $lines += New-NmsSentenceLineV62 -Text "  External logo files remain available as fallback art." -Color $script:UiDimSilver -Seed 110 -Reveal 0.88
 
@@ -6739,7 +6749,7 @@ function Get-CompactMainLeftLines {
     $lines += @(New-LeftMenuLogoRenderLinesV65 -Width $w)
     $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "OpenPGP Quantum Guard" -Seed 101 -Reveal 0.94 -Selected) -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "PQC-enabled OpenPGP operations" -Seed 102 -Reveal 0.93 -Selected) -Width $w -Color $script:UiSilverBlue
+    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Sealed by Bak3n3k0" -Seed 102 -Reveal 0.93 -Selected) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text ("FPR   : {0}" -f $fpr) -Seed 103 -Reveal 0.91) -Width $w -Color $script:UiSilverBlue
     $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text $modeLine -Seed 104 -Reveal 0.91) -Width $w -Color $script:UiSilverBlue
@@ -6749,7 +6759,7 @@ function Get-CompactMainLeftLines {
     $lines += New-V57TextLine (New-V57BoxBottom $w) $script:UiBorderBlue
     $lines += New-V57TextLine "" $script:UiDimSilver
     $lines += New-NmsSentenceGradientLineV62 -Text ("  Build {0}: setup doctor" -f $script:ToolVersion) -Seed 108 -Reveal 0.90 -Bold
-    $lines += New-NmsSentenceLineV62 -Text "  One maintained embedded logo; optional external art is configurable." -Color $script:UiDimSilver -Seed 109 -Reveal 0.88
+    $lines += New-NmsSentenceLineV62 -Text "  ANSI logo restored. External logos are fallback only." -Color $script:UiDimSilver -Seed 109 -Reveal 0.88
     $lines += New-NmsSentenceLineV62 -Text "  Use Setup Doctor when moving the tool to another PC." -Color $script:UiDimSilver -Seed 110 -Reveal 0.88
 
     if ($windowHeight -ge 34) {
@@ -6797,7 +6807,7 @@ function Main-Menu {
             (New-ConsoleMenuItem -Label "Export keys" -Value "Export" -Hint "Export public certificates or protected secret material." -Color $script:UiWhiteSilver -Shortcut "8"),
             (New-ConsoleMenuItem -Label "Setup doctor" -Value "Doctor" -Hint "Check config, folders, GnuPG, key inventory, and PQC hints." -Color $script:UiWhiteSilver -Shortcut "d"),
             (New-ConsoleMenuItem -Label "About" -Value "About" -Hint "Open operator notes, logo source order, scoring and security model." -Color $script:UiSilverBlue -Shortcut "9"),
-            (New-ConsoleMenuItem -Label "Admin settings" -Value "Admin" -Hint "Safety-confirmed settings, output mode, identity administration and defaults." -Color $script:UiMidBlue -Shortcut "0"),
+            (New-ConsoleMenuItem -Label "Admin settings" -Value "Admin" -Hint "Password-gated settings, output mode, identity admin and defaults." -Color $script:UiMidBlue -Shortcut "0"),
             (New-ConsoleMenuItem -Label "Quit" -Value "Quit" -Hint "Close the tool cleanly." -Color $script:UiWhiteSilver -Shortcut "q")
         )
         $choice = Invoke-MainMenuRightPanel -HeaderLines $header -Items $items
@@ -6821,11 +6831,10 @@ function Main-Menu {
 }
 
 # -----------------------------------------------------------------------------
-# CURRENT INTERFACE AND ENTRY POINT
-# Compact key selection, live display effects, About page, and the single
-# maintained embedded boot logo. Definitions below are the active overrides.
+# v71: compact Choose Different Key page, smoother live NMS, richer About,
+#      and new embedded boot logo.
 # -----------------------------------------------------------------------------
-$script:ToolVersion = "1.0.0-rc1"
+$script:ToolVersion = "v71"
 $script:LiveNmsMenuEnabled = $true
 $script:V62NmsFrameDelayMs = 52
 $script:LeftLogoUseCompactWhenOversized = $false
@@ -7083,7 +7092,7 @@ function Show-StartupBootScreenV51 {
     Write-Host ("  ┌{0}┐" -f $rule) -ForegroundColor $script:UiBorderBlue
     Write-BootMenuBoxLineV67 -Label "BOOT MENU" -Value ([string]$script:BootMenuTitle) -Width $boxWidth -Highlight
     Write-BootMenuBoxLineV67 -Label "Operator" -Value ([string]$script:BootMenuSubtitle) -Width $boxWidth
-    Write-BootMenuBoxLineV67 -Label "Build" -Value ([string]$script:ToolVersion) -Width $boxWidth -Highlight
+    Write-BootMenuBoxLineV67 -Label "Build" -Value "v71 smooth NMS + compact key chooser" -Width $boxWidth -Highlight
     Write-BootMenuBoxLineV67 -Label "Config" -Value (Format-DisplayPath (Get-ConfigPathV63)) -Width $boxWidth
     Write-BootMenuBoxLineV67 -Label "PGP folder" -Value (Format-DisplayPath $script:DefaultStartFolder) -Width $boxWidth
     Write-BootMenuBoxLineV67 -Label "Output folder" -Value (Format-DisplayPath (Get-OutputFolderV63)) -Width $boxWidth
@@ -7195,8 +7204,8 @@ function Cycle-ActiveIdentityV44 {
     $match = @($keys | Where-Object { (Normalize-Fingerprint $_.Fingerprint) -eq (Normalize-Fingerprint $chosen) })
     if ($match.Count -eq 0) { return }
     $k = $match[0]
-    $script:IdentityFingerprint = Normalize-Fingerprint ([string]$k.Fingerprint)
-    $script:ExpectedUidHint = [string]$k.PrimaryUid
+$script:IdentityFingerprint = "<OPENPGP_FINGERPRINT>"
+$script:ExpectedUidHint = "Example Researcher <researcher@example.invalid>"
     Save-Config
     Write-Banner -Title "Active key changed"
     Write-V46GradientWrappedText -Text ("Active: {0}  {1}" -f (Short-Fpr $script:IdentityFingerprint), $script:ExpectedUidHint) -Indent "  " -Width 110 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
@@ -7230,9 +7239,9 @@ function Show-AboutSection {
         "This project highlights Kyber / ML-KEM hybrid OpenPGP profiles, including Kyber 1024 X448 as the current default profile.",
         "The tool still treats compatibility honestly: many email flows still need classic ed25519 plus cv25519 today."
     )
-    Write-V71AboutBox -Title "Design goal" -Lines @(
-        "This project is a practical cryptography lab, operator interface, and workflow helper.",
-        "Its goal is to make strong OpenPGP operations readable, repeatable, and safer for humans without hiding what GnuPG is doing."
+    Write-V71AboutBox -Title "Bak3n3k0, the creator" -Lines @(
+        "Bak3n3k0 built this as a practical cryptography lab, an operator interface, and a real workflow helper.",
+        "The design goal is simple: make strong OpenPGP operations readable, repeatable, and safer for humans without hiding what GnuPG is doing."
     )
     Write-V71AboutBox -Title "Security model" -Lines @(
         "The script does not store private-key passphrases. GnuPG pinentry unlocks private keys only when a crypto operation needs them.",
@@ -7241,7 +7250,7 @@ function Show-AboutSection {
     )
     Write-V71AboutBox -Title "Interface" -Lines @(
         "Live NMS is visual theater across the main menu. It does not change encryption, signing, key choice, or GnuPG behavior.",
-        "One maintained boot logo is embedded. Optional external artwork is loaded only from paths explicitly set in the configuration file."
+        "The main ANSI logo remains the default left-panel identity. Boot art is embedded for this build, and external logo files remain available."
     )
     Write-V46GradientWrappedText -Text "Press ENTER to return." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
     Wait-User
@@ -7262,8 +7271,8 @@ function Main-Menu {
             (New-ConsoleMenuItem -Label "Generate new key" -Value "GenerateKey" -Hint "Create email-compatible, PQC, or manually mixed identities." -Color $script:UiSilverBlue -Shortcut "7"),
             (New-ConsoleMenuItem -Label "Export keys" -Value "Export" -Hint "Export public certificates or protected secret material." -Color $script:UiWhiteSilver -Shortcut "8"),
             (New-ConsoleMenuItem -Label "Setup doctor" -Value "Doctor" -Hint "Check config, folders, GnuPG, key inventory, and PQC hints." -Color $script:UiWhiteSilver -Shortcut "d"),
-            (New-ConsoleMenuItem -Label "About" -Value "About" -Hint "Project scope, PQC notes, interface behavior, and security model." -Color $script:UiSilverBlue -Shortcut "9"),
-            (New-ConsoleMenuItem -Label "Admin settings" -Value "Admin" -Hint "Safety-confirmed settings, output mode, identity administration and defaults." -Color $script:UiMidBlue -Shortcut "0"),
+            (New-ConsoleMenuItem -Label "About" -Value "About" -Hint "Project, PQC, Bak3n3k0 creator notes, and security model." -Color $script:UiSilverBlue -Shortcut "9"),
+            (New-ConsoleMenuItem -Label "Admin settings" -Value "Admin" -Hint "Password-gated settings, output mode, identity admin and defaults." -Color $script:UiMidBlue -Shortcut "0"),
             (New-ConsoleMenuItem -Label "Quit" -Value "Quit" -Hint "Close the tool cleanly." -Color $script:UiWhiteSilver -Shortcut "q")
         )
         $choice = Invoke-MainMenuRightPanel -HeaderLines $header -Items $items
