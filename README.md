@@ -10,8 +10,8 @@
     </a>
   </p>
 </p>
-# OpenPGP Quantum Guard
 
+## OpenPGP Quantum Guard
 OpenPGP Quantum Guard is an experimental Windows PowerShell operator console for GnuPG file and text protection. It supports classic OpenPGP profiles and GnuPG 2.5+ composite Kyber/ML-KEM encryption subkeys.
 
 ## Cryptographic scope
