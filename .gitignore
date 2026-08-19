@@ -1,0 +1,17 @@
+src/openpgp_quantum_guard.config.json
+data/
+output/
+logos/
+.gnupg/
+private-keys-v1.d/
+openpgp-revocs.d/
+*.gpg
+*.pgp
+*.asc
+*.key
+*.p12
+*.pfx
+*.rev
+*.log
+*.bak
+*.tmp
