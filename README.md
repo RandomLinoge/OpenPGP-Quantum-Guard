@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/RandomLinoge/OpenPGP-Quantum-Guard/blob/main/QuantumGuard-Logo.jpg">
+  <img src="https://github.com/RandomLinoge/OpenPGP-Quantum-Guard/blob/main/src/QuantumGuard-Logo.jpg">
   <p align="center">Experimental PowerShell laboratory for ML-DSA and SLH-DSA X.509 certificates and detached file signatures.</p>
   <p align="center">
   </a>
@@ -44,6 +44,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 
 The script creates repository-relative `data`, `output`, and optional `logos` folders. Real passphrases must never be written into the configuration. GnuPG pinentry handles private-key unlocking.
+
+<img src="https://github.com/RandomLinoge/OpenPGP-Quantum-Guard/blob/main/src/QuantumGuard-Main.jpg">
 
 ## Safe first test
 
