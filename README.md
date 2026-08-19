@@ -1,3 +1,15 @@
+<p align="center">
+  <img src="https://github.com/RandomLinoge/OpenPGP-Quantum-Guard/blob/main/QuantumGuard-Logo.jpg">
+  <p align="center">Experimental PowerShell laboratory for ML-DSA and SLH-DSA X.509 certificates and detached file signatures.</p>
+  <p align="center">
+  </a>
+    <a href="https://github.com/RandomLinoge/OpenPGP-Quantum-Guard">
+      <img src="https://img.shields.io/badge/Version-1.0.0_rc1-darkblue">
+        <img src="https://img.shields.io/badge/Release%20Date-August%202026-blue">
+  <img src="https://img.shields.io/badge/powershell-100%25-blue?style=plastic">
+    </a>
+  </p>
+</p>
 # OpenPGP Quantum Guard
 
 OpenPGP Quantum Guard is an experimental Windows PowerShell operator console for GnuPG file and text protection. It supports classic OpenPGP profiles and GnuPG 2.5+ composite Kyber/ML-KEM encryption subkeys.
