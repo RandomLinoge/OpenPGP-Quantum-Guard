@@ -69,3 +69,9 @@ Research preview. The tool has not received an independent security audit. Revie
 ## License
 
 Apache License 2.0.
+
+## Open Source
+
+This project is open-source software. Its source code is publicly available for inspection, research, testing, modification, and contribution under the terms provided in the repository's LICENSE file.
+
+Security testing, interoperability testing, responsible vulnerability reports, documentation improvements, and code contributions are welcome. This project is provided without any claim of an independent security audit or fitness for production use.
