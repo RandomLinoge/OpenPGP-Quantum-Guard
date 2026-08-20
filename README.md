@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://github.com/RandomLinoge/OpenPGP-Quantum-Guard/blob/main/src/QuantumGuard-Logo.jpg">
-  <p align="center">Experimental PowerShell laboratory for ML-DSA and SLH-DSA X.509 certificates and detached file signatures.</p>
+  <p align="center">Experimental Windows PowerShell operator console for GnuPG file and text protection with PQC-capable composite Kyber/ML-KEM encryption subkeys.</p>
   <p align="center">
   </a>
     <a href="https://github.com/RandomLinoge/OpenPGP-Quantum-Guard">
