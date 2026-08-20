@@ -2448,9 +2448,10 @@ function Show-AboutDashboard {
     )
     Write-AboutRuleCompact -Width $w
     Write-AboutRowCompact -Width $w -Label "Operator" -TextColor $script:UiSilverBlue -Lines @(
-        "OpenPGP Quantum Guard: experimental operator tooling for GnuPG,",
-        "builder, and practical cryptography enthusiast focused on",
-        "operational security and verifiable OpenPGP identity."
+        "Bak3n3k0.",
+        "Security researcher, builder, hacker. Practical cryptography lab.",
+        "Maintained as an open cryptography research project.",
+        "GitHub: https://github.com/RandomLinoge"
     )
     Write-AboutRuleCompact -Width $w
     Write-AboutRowCompact -Width $w -Label "Security" -TextColor $script:UiDimSilver -Lines @(
@@ -3719,8 +3720,10 @@ function Get-AboutV55LeftLines {
         "Keep identity, output mode, and key choice visible."
     ))
     $lines += @(New-AboutV55SectionLines -Width 58 -Label "Operator" -TextLines @(
+        "Bak3n3k0.",
+        "Security researcher, builder, hacker. Practical cryptography lab.",
         "Maintained as an open cryptography research project.",
-        "Security researcher, builder, hacker. Practical cryptography lab."
+        "GitHub: https://github.com/RandomLinoge"
     ))
     $lines += @(New-AboutV55SectionLines -Width 58 -Label "Security" -TextLines @(
         "Private-key passphrases are not stored by this script.",
