@@ -17,3 +17,25 @@ openpgp-revocs.d/
 *.log
 *.bak
 *.tmp
+
+# Local lab, terminal recordings and workstation backups
+/.lab/
+/*.mp4
+*.backup-*
+/src/OpenPGP-Quantum-Guard - Copy.ps1
+
+# Temporary root-level patches and reference builds
+/Install-*.ps1
+/Fix-*.ps1
+/Boot*-v[0-9]*.ps1
+/Boot*.v[0-9]*.ps1
+/CodeRain*.ps1
+/OpenPGP-Quantum-Guard.*-v[0-9]*.ps1
+/OpenPGP-Quantum-Guard.v[0-9]*.Full.ps1
+/Oqg-*.Patches.json
+/StartupRain.v[0-9]*.ps1
+/TransitionRain.v[0-9]*.ps1
+
+# Local duplicates of the tracked artwork in src/
+/openpgp_quantum_guard_left_logo.ansi.txt
+/openpgp_quantum_guard_main_logo.ansi.txt
