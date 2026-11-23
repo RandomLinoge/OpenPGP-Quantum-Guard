@@ -10,8 +10,7 @@
   </p>
 </p>
 
-## OpenPGP Quantum Guard
-OpenPGP Quantum Guard is an experimental Windows PowerShell operator console for GnuPG file and text protection. It supports classic OpenPGP profiles and GnuPG 2.5+ composite Kyber/ML-KEM encryption subkeys.
+This is a focused fix for the boot text corruption shown in the November 23 screenshot and pasted terminal dump. **It does not assert a successful Windows Terminal visual test.**
 
 ## Command-line interface (CLI)
 OpenPGP Quantum Guard now includes a companion command-line interface (CLI) alongside its interactive PowerShell terminal interface (TUI). 
@@ -44,8 +43,9 @@ GnuPG performs every cryptographic operation. This project does not implement ML
 4. Run:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-& .\src\OpenPGP-Quantum-Guard.ps1
+& '.\Install-Oqg-Boot-Foreground-v41.ps1' -PreviewOnly
+& '.\Install-Oqg-Boot-Foreground-v41.ps1'
+& '.\src\OpenPGP-Quantum-Guard.ps1'
 ```
 
 The script creates repository-relative data, output, and optional logos folders. Real passphrases must never be written into the configuration. GnuPG pinentry handles private-key unlocking.
@@ -70,4 +70,4 @@ Apache License 2.0.
 ## Open Source
 This project is open-source software. Its source code is publicly available for inspection, research, testing, modification, and contribution under the terms provided in the repository's LICENSE file.
 
-Security testing, interoperability testing, responsible vulnerability reports, documentation improvements, and code contributions are welcome. This project is provided without any claim of an independent security audit or fitness for production use.
+**Known limitations:** This package has not been run under native Windows PowerShell 5.1/Windows Terminal. Static and simulated checks are not equivalent to checking a live terminal recording. It is also not a general-purpose layering solution; it protects the boot elements named above while preserving the existing rain engine.
