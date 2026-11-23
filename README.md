@@ -10,7 +10,8 @@
   </p>
 </p>
 
-This is a focused fix for the boot text corruption shown in the November 23 screenshot and pasted terminal dump. **It does not assert a successful Windows Terminal visual test.**
+## Live Demo
+![LiveDemo](./assets/OpenQuantumGuard-Demo.gif)
 
 ## Command-line interface (CLI)
 OpenPGP Quantum Guard now includes a companion command-line interface (CLI) alongside its interactive PowerShell terminal interface (TUI). 
