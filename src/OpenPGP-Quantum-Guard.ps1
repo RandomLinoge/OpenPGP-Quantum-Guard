@@ -1,4 +1,4 @@
-<#
+﻿<#
 OpenPGP Quantum Guard
 
 Purpose
@@ -341,6 +341,14 @@ function Write-QuitGuardNotice {
     Start-Sleep -Milliseconds 650
 }
 
+function Start-OqgInteractiveGpg {
+    param([string[]]$Arguments)
+    $quoted = foreach ($argument in $Arguments) {
+        '"' + (($argument -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
+    }
+    Start-Process -FilePath $script:GpgPath -ArgumentList ($quoted -join ' ') -Wait
+}
+
 function Install-QuitGuard {
     if ($script:QuitGuardInstalled) { return }
 
@@ -374,6 +382,7 @@ function Restore-QuitGuard {
 function Test-BlockedControlQuitKey {
     param([Parameter(Mandatory=$true)][ConsoleKeyInfo]$KeyInfo)
 
+    if ([int]$KeyInfo.KeyChar -in @(3,17,26)) { return $true }
     $isCtrl = (($KeyInfo.Modifiers -band [ConsoleModifiers]::Control) -eq [ConsoleModifiers]::Control)
     if (-not $isCtrl) { return $false }
 
@@ -386,7 +395,7 @@ $script:IdentityFingerprint = ""
 
 function Wait-User {
     Write-Host ""
-    [void](Read-Host "Press ENTER to continue")
+    [void](Read-OqgPrompt "Press ENTER to continue")
 }
 
 function Format-Size {
@@ -397,6 +406,33 @@ function Format-Size {
     return "$Bytes B"
 }
 
+function Read-OqgPrompt {
+    param([string]$Prompt)
+    [Console]::Write($Prompt + ': ')
+    if ([Console]::IsInputRedirected) {
+        $line = [Console]::ReadLine()
+        if ($null -eq $line) { throw 'Standard input closed while reading a prompt.' }
+        return $line
+    }
+    [Console]::TreatControlCAsInput = $true
+    $line = New-Object System.Text.StringBuilder
+    while ($true) {
+        $key = [Console]::ReadKey($true)
+        if (Test-BlockedControlQuitKey -KeyInfo $key) { continue }
+        if ($key.Key -eq 'Enter' -or [int]$key.KeyChar -in @(10,13)) {
+            [Console]::WriteLine()
+            return $line.ToString()
+        }
+        if ($key.Key -eq 'Backspace' -and $line.Length -gt 0) {
+            [void]$line.Remove($line.Length-1,1)
+            [Console]::Write("`b `b")
+        } elseif (-not [char]::IsControl($key.KeyChar)) {
+            [void]$line.Append($key.KeyChar)
+            [Console]::Write($key.KeyChar)
+        }
+    }
+}
+
 function Read-YesNo {
     param(
         [Parameter(Mandatory=$true)][string]$Question,
@@ -405,7 +441,7 @@ function Read-YesNo {
 
     $suffix = if ($DefaultYes) { "[Y/n]" } else { "[y/N]" }
     while ($true) {
-        $answer = (Read-Host "$Question $suffix").Trim().ToLowerInvariant()
+        $answer = (Read-OqgPrompt "$Question $suffix").Trim().ToLowerInvariant()
         if ([string]::IsNullOrWhiteSpace($answer)) { return $DefaultYes }
         if ($answer -in @("y", "yes")) { return $true }
         if ($answer -in @("n", "no")) { return $false }
@@ -657,7 +693,7 @@ function Get-MenuItemColor {
     return "White"
 }
 
-function Invoke-ConsoleMenu {
+function Invoke-OqgLegacyConsoleMenu {
     param(
         [Parameter(Mandatory=$true)][string]$Title,
         [Parameter(Mandatory=$true)]$Items,
@@ -778,7 +814,7 @@ function Invoke-ConsoleMenu {
                 if (-not $keyState.HasKey) { Advance-NmsWave; continue }
                 $key = $keyState.Key
             } catch {
-                $fallback = (Read-Host "Choose").Trim()
+                $fallback = (Read-OqgPrompt "Choose").Trim()
                 if ($fallback -match "^[\x03\x11\x1A]$") {
                     Write-QuitGuardNotice
                     continue
@@ -799,6 +835,7 @@ function Invoke-ConsoleMenu {
             }
 
             switch ($key.Key) {
+                "N" { Switch-OqgMenuNms; $firstDraw = $true }
                 "LeftArrow"  { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta -1; Advance-NmsWave; Clear-PendingConsoleKeys }
                 "UpArrow"    { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta -1; Advance-NmsWave; Clear-PendingConsoleKeys }
                 "RightArrow" { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta 1; Advance-NmsWave; Clear-PendingConsoleKeys }
@@ -840,9 +877,6 @@ function Get-NonClobberPath {
 
     throw "Could not create a non-conflicting output path for: $Path"
 }
-
-
-
 
 
 function Select-KeyFileArrowInteractive {
@@ -1004,7 +1038,6 @@ function Test-PqcLikeSubkey {
     $hay = "{0} {1} {2} {3} {4}" -f $Subkey.DisplayAlgo, $Subkey.Curve, $Subkey.Algo, $Subkey.KeyId, $Subkey.Capabilities
     return ($hay -match '(?i)(ky|kyber|kem|mlkem|ml-kem|pqc)')
 }
-
 
 
 function Get-StrengthColor {
@@ -1340,7 +1373,7 @@ function Read-ExportPath {
         return $DefaultPath
     }
 
-    $custom = (Read-Host "Export path").Trim('"')
+    $custom = (Read-OqgPrompt "Export path").Trim('"')
     if ([string]::IsNullOrWhiteSpace($custom)) {
         return $DefaultPath
     }
@@ -1363,7 +1396,7 @@ function Confirm-DangerousExport {
     Write-Host "" 
     Write-Host "To continue, type exactly:" -ForegroundColor Gray
     Write-Host "  $Phrase" -ForegroundColor White
-    $typed = Read-Host "Confirmation"
+    $typed = Read-OqgPrompt "Confirmation"
     return ($typed -ceq $Phrase)
 }
 
@@ -1581,7 +1614,7 @@ function Decrypt-FileWorkflow {
 
     $outPath = $defaultOut
     if (-not (Read-YesNo "Use this output path?" $true)) {
-        $custom = (Read-Host "Output path").Trim('"')
+        $custom = (Read-OqgPrompt "Output path").Trim('"')
         if (-not [string]::IsNullOrWhiteSpace($custom)) {
             $outPath = $custom
         }
@@ -1666,7 +1699,7 @@ function Add-UidToActiveKeyWorkflow {
     Write-Host "Active fingerprint:" -ForegroundColor $script:UiDimSilver
     Write-Host "  $script:IdentityFingerprint" -ForegroundColor $script:UiWhiteSilver
     Write-Host ""
-    $name = (Read-Host "Name").Trim(); $email = (Read-Host "Email").Trim(); $comment = (Read-Host "Comment, optional").Trim()
+    $name = (Read-OqgPrompt "Name").Trim(); $email = (Read-OqgPrompt "Email").Trim(); $comment = (Read-OqgPrompt "Comment, optional").Trim()
     if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($email)) { Write-Host "Name and email are required." -ForegroundColor $script:UiLightBlue; Wait-User; return }
     $uid = if ([string]::IsNullOrWhiteSpace($comment)) { "{0} <{1}>" -f $name, $email } else { "{0} ({1}) <{2}>" -f $name, $comment, $email }
     Write-Host ""; Write-Host "New UID:" -ForegroundColor $script:UiDimSilver; Write-Host "  $uid" -ForegroundColor $script:UiWhiteSilver
@@ -1684,7 +1717,7 @@ function Edit-ActiveKeyWorkflow {
     Write-Host "Use GnuPG commands carefully. Type 'help' inside GnuPG for commands and 'quit' to exit." -ForegroundColor $script:UiDimSilver
     Write-Host ""; Write-Host "Active fingerprint:" -ForegroundColor $script:UiDimSilver; Write-Host "  $script:IdentityFingerprint" -ForegroundColor $script:UiWhiteSilver
     if (-not (Read-YesNo "Open gpg --edit-key for this identity?" $false)) { return }
-    & $script:GpgPath --edit-key $script:IdentityFingerprint
+    Start-OqgInteractiveGpg -Arguments @('--edit-key', $script:IdentityFingerprint)
     Wait-User
 }
 
@@ -1760,8 +1793,8 @@ function Request-AdminAccess {
     Write-Host "These settings can change identity selection, exports, and output safety." -ForegroundColor Gray
     Write-Host ""
     Write-Host "This confirmation is a safety interlock, not authentication." -ForegroundColor $script:UiDimSilver
-    $confirmation = Read-Host 'Type ADMIN to continue'
-    if ($confirmation -ceq "ADMIN") { return $true }
+    $confirmation = Read-OqgPrompt 'Type AUTHORIZED to continue'
+    if ($confirmation -ceq "AUTHORIZED") { return $true }
 
     Write-Host ""
     Write-Host "Admin settings cancelled." -ForegroundColor $script:UiLightBlue
@@ -1794,18 +1827,13 @@ function Show-AdminSettings {
             "IdentityAdmin" { Show-IdentityAdminMenu }
             "Fingerprint" { Change-ActiveFingerprint }
             "MenuReveal" {
-                $script:EnableNoMoreSecretsEffect = -not $script:EnableNoMoreSecretsEffect
-                $script:EnableDynamicNmsMenu = $script:EnableNoMoreSecretsEffect
-                $state = if ($script:EnableNoMoreSecretsEffect) { "ON" } else { "OFF" }
-                Write-Host ("NMS reveal is now: {0}" -f $state) -ForegroundColor $script:UiWhiteSilver
-                Wait-User
+                Switch-OqgMenuNms
             }
             "Back" { return }
             default { return }
         }
     }
 }
-
 
 
 function Split-BoxTextLine {
@@ -1921,7 +1949,6 @@ function New-StatusPanelGradientSegments {
     $segments += (New-ConsoleSegment -Text "│" -Color $script:UiBorderBlue)
     return @($segments)
 }
-
 
 
 function New-StatusPanelCryptoSegments {
@@ -2645,8 +2672,6 @@ function Convert-MarkupToWrappedSegmentLines {
 }
 
 
-
-
 function Invoke-AboutRightPanel {
     param([Parameter(Mandatory=$true)]$LeftLines)
 
@@ -2678,20 +2703,54 @@ function Invoke-AboutRightPanel {
 }
 
 
-
 function Read-MultilineTextBlock {
     param([string]$Title = "Paste text")
     Write-Host ""
     Write-Host $Title -ForegroundColor $script:UiWhiteSilver
-    Write-Host "Paste or type text below. Finish with a single line containing .END" -ForegroundColor $script:UiDimSilver
-    Write-Host ""
+    Write-Host "Finish with .END on its own line. Ctrl+C discards this entry and returns to the menu." -ForegroundColor $script:UiDimSilver
     $lines = New-Object System.Collections.Generic.List[string]
-    while ($true) {
-        $line = Read-Host ">"
-        if ($line -eq ".END") { break }
-        [void]$lines.Add($line)
+    if ([Console]::IsInputRedirected) {
+        while ($null -ne ($line = [Console]::ReadLine())) {
+            if ($line -eq ".END") { return ($lines -join [Environment]::NewLine) }
+            [void]$lines.Add($line)
+        }
+        return $null
     }
-    return ($lines -join [Environment]::NewLine)
+
+    $priorMode = [Console]::TreatControlCAsInput
+    try {
+        [Console]::TreatControlCAsInput = $true
+        $buffer = New-Object System.Text.StringBuilder
+        $afterCR = $false
+        [Console]::Write("> ")
+        while ($true) {
+            $key = [Console]::ReadKey($true)
+            $ch = $key.KeyChar
+            if ([int]$ch -eq 3 -or ($key.Key -eq 'C' -and ($key.Modifiers -band [ConsoleModifiers]::Control))) {
+                [Console]::WriteLine()
+                return $null
+            }
+            if ($afterCR -and [int]$ch -eq 10) { $afterCR = $false; continue }
+            if (Test-BlockedControlQuitKey -KeyInfo $key) { continue }
+            $afterCR = ([int]$ch -eq 13)
+            if ($key.Key -eq 'Enter' -or $afterCR -or [int]$ch -eq 10) {
+                [Console]::WriteLine()
+                $line = $buffer.ToString()
+                if ($line -eq ".END") { return ($lines -join [Environment]::NewLine) }
+                [void]$lines.Add($line)
+                [void]$buffer.Clear()
+                [Console]::Write("> ")
+            } elseif ($key.Key -eq 'Backspace' -and $buffer.Length -gt 0) {
+                [void]$buffer.Remove($buffer.Length-1,1)
+                [Console]::Write("`b `b")
+            } elseif (-not [char]::IsControl($ch) -or [int]$ch -eq 9) {
+                [void]$buffer.Append($ch)
+                [Console]::Write($ch)
+            }
+        }
+    } finally {
+        [Console]::TreatControlCAsInput = $priorMode
+    }
 }
 
 
@@ -2765,10 +2824,6 @@ function Show-DecryptedTextPanel {
         Write-Host ""
     }
 }
-
-
-
-
 
 
 # === v44 upgrade: encrypted file browser, startup identity selection, eligible key inventory, differentiated strength ===
@@ -2858,7 +2913,7 @@ function Select-FileInteractive {
         Write-Host "  Q      = cancel" -ForegroundColor $script:UiDimSilver
         Write-Host ""
 
-        $choice = (Read-Host "Selection").Trim()
+        $choice = (Read-OqgPrompt "Selection").Trim()
         if ([string]::IsNullOrWhiteSpace($choice) -or $choice -match '^(r|refresh)$') { continue }
         if ($choice -match '^(q|quit|cancel)$') { return $null }
         if ($choice -match '^(u|up|\.\.)$') {
@@ -2867,7 +2922,7 @@ function Select-FileInteractive {
             continue
         }
         if ($choice -match '^(j|jump|c|cd)$') {
-            $newPath = (Read-Host "Paste full folder path").Trim('"')
+            $newPath = (Read-OqgPrompt "Paste full folder path").Trim('"')
             if (Test-Path -LiteralPath $newPath -PathType Container) {
                 $current = (Resolve-Path -LiteralPath $newPath).Path
             } else {
@@ -2877,14 +2932,14 @@ function Select-FileInteractive {
             continue
         }
         if ($choice -match '^(p|path)$') {
-            $filePath = (Read-Host "Exact file path").Trim('"')
+            $filePath = (Read-OqgPrompt "Exact file path").Trim('"')
             if (Test-Path -LiteralPath $filePath -PathType Leaf) { return (Resolve-Path -LiteralPath $filePath).Path }
             Write-Host "File not found: $filePath" -ForegroundColor $script:UiLightBlue
             Wait-User
             continue
         }
         if ($choice -match '^(s|search)$') {
-            $searchRoot = (Read-Host "Search under folder path [ENTER = current]").Trim('"')
+            $searchRoot = (Read-OqgPrompt "Search under folder path [ENTER = current]").Trim('"')
             if ([string]::IsNullOrWhiteSpace($searchRoot)) { $searchRoot = $current }
             if (-not (Test-Path -LiteralPath $searchRoot -PathType Container)) {
                 Write-Host "Folder not found: $searchRoot" -ForegroundColor $script:UiLightBlue
@@ -2892,7 +2947,7 @@ function Select-FileInteractive {
                 continue
             }
             $current = (Resolve-Path -LiteralPath $searchRoot).Path
-            $pattern = (Read-Host "Search file name contains").Trim()
+            $pattern = (Read-OqgPrompt "Search file name contains").Trim()
             if ([string]::IsNullOrWhiteSpace($pattern)) { continue }
             Write-Host "Searching. Large folders may take a few seconds..." -ForegroundColor $script:UiDimSilver
             $results = @(Get-ChildItem -LiteralPath $current -Recurse -File -Force -ErrorAction SilentlyContinue |
@@ -2982,11 +3037,6 @@ function Write-V46GradientWrappedText {
 }
 
 
-
-
-
-
-
 function Show-KeyDetailsV44 {
     param([Parameter(Mandatory=$true)]$Key, [Parameter(Mandatory=$true)]$Inventory)
     Write-Host ""
@@ -3005,7 +3055,6 @@ function Show-KeyDetailsV44 {
     if (-not [string]::IsNullOrWhiteSpace($dup)) { Write-V44WrappedText -Text $dup -Color $script:UiDimSilver -Width 100 -Indent "      " }
     Write-Host ""
 }
-
 
 
 function Get-ConsoleSafeHeightV47 {
@@ -3056,18 +3105,12 @@ function New-StrengthBadgeSegmentsV47 {
 }
 
 
-
-
-
-
-
 function Get-EncryptionStrengthScore {
     param($Subkey)
     if ($null -eq $Subkey) { return 0 }
     $hay = ("{0} {1} {2} {3}" -f $Subkey.DisplayAlgo, $Subkey.Curve, $Subkey.Algo, $Subkey.KeyId)
     return [int](Get-AlgorithmScoreV44 -AlgorithmText $hay)
 }
-
 
 
 function Select-FromSearchResults {
@@ -3093,7 +3136,7 @@ function Select-FromSearchResults {
     }
 
     while ($true) {
-        $choice = (Read-Host "Choose file number, or Q to cancel").Trim()
+        $choice = (Read-OqgPrompt "Choose file number, or Q to cancel").Trim()
         if ($choice -match '^(q|quit|cancel)$') { return $null }
         $num = 0
         if ([int]::TryParse($choice, [ref]$num)) {
@@ -3121,7 +3164,7 @@ function Select-EncryptionSubkey {
     }
 
     while ($true) {
-        $choice = (Read-Host "Choose encryption subkey number, or Q to cancel").Trim()
+        $choice = (Read-OqgPrompt "Choose encryption subkey number, or Q to cancel").Trim()
         if ($choice -match '^(q|quit|cancel)$') { return $null }
         $num = 0
         if ([int]::TryParse($choice, [ref]$num)) {
@@ -3197,7 +3240,6 @@ function Write-DuplicateStrengthComparisonV48 {
 }
 
 
-
 function Read-KeyChooserCommandV47 {
     param([int]$VisibleCount)
     try {
@@ -3217,7 +3259,7 @@ function Read-KeyChooserCommandV47 {
                 if ($ch -match '^[gG]$') { return @{ Action="Generate" } }
                 if ($ch -match '^[qQ]$') { return @{ Action="Cancel" } }
                 if ($ch -match '^[dD]$') {
-                    $d = Read-Host "Details number"
+                    $d = Read-OqgPrompt "Details number"
                     $n = 0
                     if ([int]::TryParse($d, [ref]$n) -and $n -ge 1 -and $n -le $VisibleCount) { return @{ Action="Details"; Number=$n } }
                     return @{ Action="Invalid" }
@@ -3230,7 +3272,7 @@ function Read-KeyChooserCommandV47 {
             }
         }
     } catch { }
-    $raw = (Read-Host "> ").Trim()
+    $raw = (Read-OqgPrompt "> ").Trim()
     if ([string]::IsNullOrWhiteSpace($raw)) { return @{ Action="Cancel" } }
     if ($raw -match '^(?i)(g|gen|generate|new)$') { return @{ Action="Generate" } }
     if ($raw -match '^(?i)(n|next|right)$') { return @{ Action="Next" } }
@@ -3243,12 +3285,6 @@ function Read-KeyChooserCommandV47 {
 }
 
 
-
-
-
-
-
-
 # -----------------------------------------------------------------------------
 # v49 stable screen override
 # Keeps the v35/v48 dashboard style, but removes the unstable animated menu redraw
@@ -3257,10 +3293,6 @@ function Read-KeyChooserCommandV47 {
 # -----------------------------------------------------------------------------
 $script:EnableDynamicNmsMenu = $false
 $script:NmsAnimateHints = $false
-
-
-
-
 
 
 # -----------------------------------------------------------------------------
@@ -3279,7 +3311,6 @@ function Confirm-KeyMayNeedPassphraseV44 {
     # decrypt/sign operation needs it.
     return $true
 }
-
 
 
 function Get-StrengthRuleShortV50 {
@@ -3347,11 +3378,6 @@ function Write-DuplicateStrengthComparisonV50 {
 }
 
 
-
-
-
-
-
 function New-AboutPairRenderLines {
     param(
         [Parameter(Mandatory=$true)][string]$Label,
@@ -3410,7 +3436,7 @@ function New-AboutRightLines {
     $lines += (New-MenuRenderLine -Text $rule -Color $script:UiBorderBlue)
 
     $lines += @(New-AboutPairRenderLines -Label "Controls" -TextWidth $textWidth -TextLines @(
-        "Use arrows to move, ENTER to open, shortcuts for direct actions, and Q to quit cleanly.",
+        "Use arrows to move, ENTER to open, shortcuts for direct actions, and select Quit to close the tool.",
         "The file browser can jump to a pasted folder, accept an exact file path, search, and highlight encrypted .asc/.gpg/.pgp files."
     ))
     $lines += (New-MenuRenderLine -Text $rule -Color $script:UiBorderBlue)
@@ -3423,13 +3449,12 @@ function New-AboutRightLines {
 
     $lines += @(New-AboutPairRenderLines -Label "Security" -TextWidth $textWidth -TextLines @(
         "The script does not store private-key passphrases. GnuPG and pinentry handle private-key unlock prompts only when a crypto operation needs them.",
-        "Admin settings require an explicit ADMIN confirmation because they change operational behavior and defaults."
+        "Admin settings require an explicit AUTHORIZED confirmation because they change operational behavior and defaults."
     ))
     $lines += (New-MenuRenderLine -Text $rule -Color $script:UiBorderBlue)
     $lines += (New-MenuRenderLine -Segments @(New-GradientSegments -Text "Press ENTER to return." -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold))
     return @($lines)
 }
-
 
 
 # -----------------------------------------------------------------------------
@@ -3440,8 +3465,6 @@ $script:NmsRevealOnlyWithN = $true
 
 $script:ConfigRoot = Join-Path $env:APPDATA "OpenPGPQuantumGuard"
 $script:ConfigPath = Join-Path $script:ConfigRoot "config.json"
-
-
 
 
 function Get-AlgorithmScoreV51 {
@@ -3543,15 +3566,6 @@ function New-StrengthBadgeInlineSegmentsV51 {
     param([int]$Score)
     return @(New-StrengthBadgeSegmentsV50 -Score $Score)
 }
-
-
-
-
-
-
-
-
-
 
 
 # -----------------------------------------------------------------------------
@@ -3673,7 +3687,6 @@ function Wait-BootAfterLoadedV54 {
 }
 
 
-
 # -----------------------------------------------------------------------------
 # v55: fix N key handler, keep NMS off the right menu, compact aligned About page
 # -----------------------------------------------------------------------------
@@ -3779,8 +3792,6 @@ function Show-NmsLeftPulseV55 {
 }
 
 
-
-
 # -----------------------------------------------------------------------------
 # v56: boot logo, blocking boot progress, stable menu descriptions, compact about
 # -----------------------------------------------------------------------------
@@ -3861,7 +3872,7 @@ function Wait-ForEnterOnlyV56 {
             $key = [Console]::ReadKey($true)
             if ($key.Key -eq [ConsoleKey]::Enter) { return }
         } catch {
-            Read-Host "Press ENTER to continue"
+            Read-OqgPrompt "Press ENTER to continue"
             return
         }
     }
@@ -3964,9 +3975,6 @@ function Show-NmsLeftPulseV56 {
     }
     Start-Sleep -Milliseconds 500
 }
-
-
-
 
 
 # -----------------------------------------------------------------------------
@@ -4086,21 +4094,16 @@ function Write-BootProgressAtV57 {
     $segments += (New-ConsoleSegment -Text " " -Color $script:UiDimSilver)
     $cells = [Math]::Max(18, [Math]::Min(54, $width - 45))
     $segments += @(New-ProgressBarSegmentsV54 -Percent $Percent -Cells $cells)
-    Write-SegmentsNoNewlineV57 -Segments $segments -Width $width
+    # OQG v36: the generic writer pads to Width with opaque spaces.
+    # Progress is special: only paint the text and meter, not the rain behind it.
+    $visible = 0
+    foreach ($seg in @($segments)) { if ($null -ne $seg) { $visible += ([string]$seg.Text).Length } }
+    $paintWidth = [Math]::Min($width,[Math]::Max(1,$visible))
+    Write-SegmentsNoNewlineV57 -Segments $segments -Width $paintWidth
 }
 
 
-
-
-
-
-
-
-
-
-
 # v57 compact key chooser override, keeps identity check and chooser on one screen.
-
 
 
 # -----------------------------------------------------------------------------
@@ -4141,11 +4144,6 @@ function Get-GradientBarSegmentsV54 {
 }
 
 
-
-
-
-
-
 function New-V58SectionBox {
     param(
         [int]$Width,
@@ -4167,8 +4165,6 @@ function New-V58SectionBox {
 }
 
 
-
-
 function Write-KeyChooserHeaderV47 {
     param([string]$Title, [int]$Page, [int]$Pages, [int]$HiddenCount)
     Clear-Host
@@ -4182,8 +4178,6 @@ function Write-KeyChooserHeaderV47 {
     Write-V46GradientWrappedText -Text "Score legend: 10 ky768_cv25519 > 9 ky768_bp256 > 7 brainpoolP384r1 > 6 cv25519 > 5 ed25519 identity." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
     Write-Host ""
 }
-
-
 
 
 # -----------------------------------------------------------------------------
@@ -4208,54 +4202,6 @@ function Get-V58NmsText {
     }
     return ("NMS : {0}" -f $out)
 }
-
-function Show-StartupBootScreenV51 {
-    Clear-Host
-    Clear-PendingConsoleInputV56
-    $logoText = @'
-    __                                    __ ,                                           
-  ,-||-,                     -__ /\    ,-| ~   -__ /\                                  
- ('|||  )                      ||  \  ('||/__,   ||  \                                 
-(( |||--)) -_-_   _-_  \/\  /||__|| (( |||  |  /||__||                                 
-(( |||--)) || \ || \ || ||  \||__|| (( |||==|  \||__||                                 
- ( / |  )  || || ||/   || ||   ||  |,  ( / |  ,   ||  |,                                 
-  -____-   ||-'  \,/  \ \ _-||-_/    -____/  _-||-_/                                  
-           |/                  ||                 ||                                     
-           '                                                                             
-    __                                                     __ ,                          
-  ,-||-,                       ,                         ,-| ~                      |\   
- ('|||  )          _          ||                        ('||/__,         _           \\  
-(( |||--)) \\ \\  < \, \/\\ =||= \\ \\ \/\\/\\       (( |||  | \\ \\  < \, ,._-_  / \\ 
-(( |||--)) || ||  /-|| || ||  ||  || || || || ||       (( |||==| || ||  /-||  ||   || || 
- ( / |  )  || || (( || || ||  ||  || || || || ||        ( / |  , || || (( ||  ||   || || 
-  -____-\\ \/\\  \/\\ \\ \\  \\, \/\\ \\ \\ \\         -____/  \/\\  \/\\  \\,   \/  
-                                                                                         
-                                                                                        
-'@
-    $maxWidth = [Math]::Max(70, (Get-V57WindowWidth) - 1)
-    foreach ($line in @($logoText -split "`r?`n")) {
-        $safe = if ($line.Length -gt $maxWidth) { $line.Substring(0, $maxWidth) } else { $line }
-        Write-GradientFixedLineV56 -Text $safe -StartRgb $script:GradientBlueStart -EndRgb $script:GradientBlueEnd -Bold
-        Start-Sleep -Milliseconds 8
-    }
-    Write-Host ""
-    Write-GradientFixedLineV56 -Text "  OpenPGP Quantum Guard boot sequence" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-GradientFixedLineV56 -Text "  Loading runtime, GnuPG probe, trust inventory, strength profile, file browser." -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-Host ""
-    $progressRow = 0
-    try { $progressRow = [Console]::CursorTop } catch { $progressRow = 0 }
-    $steps = @(0, 8, 17, 29, 41, 53, 64, 76, 88, 96, 100)
-    foreach ($p in $steps) {
-        Clear-PendingConsoleInputV56
-        Write-BootProgressAtV57 -Row $progressRow -Percent $p -Label (Get-BootStageLabelV56 -Percent $p)
-        Start-Sleep -Milliseconds 115
-    }
-    Write-BootProgressAtV57 -Row $progressRow -Percent 100 -Label "ready"
-    try { [Console]::SetCursorPosition(0, $progressRow + 2) } catch { Write-Host "" }
-    Write-GradientFixedLineV56 -Text "  Boot complete. Press ENTER to continue to identity selection." -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Wait-ForEnterOnlyV56
-}
-
 
 
 function Get-AboutV57LeftLines {
@@ -4645,165 +4591,6 @@ function New-NmsMenuLabelSegmentsV62 {
     return @(New-MenuLabelSegments -Label $displayLabel -Prefix $Prefix -Selected:$Selected)
 }
 
-function Get-CompactMainLeftLines {
-    param([string]$ModeText, [string]$GpgState)
-
-    $fpr = Short-Fpr $script:IdentityFingerprint
-    $modeLine = ("Mode  : {0}   GnuPG: {1}" -f $ModeText, $GpgState)
-    $nmsLine = Convert-ToNmsSentenceV62 -Text "NMS : NO MORE SECRETS" -Seed 90 -Reveal 0.58
-    if (-not [bool]$script:LiveNmsMenuEnabled) { $nmsLine = "NMS : standby" }
-
-    $lines = @()
-    $w = 60
-    $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
-    $lines += New-NmsSentenceGradientLineV62 -Text "OpenPGP Quantum Guard" -Seed 1 -Reveal 0.78 -Bold -Selected
-    $lines += New-NmsSentenceLineV62 -Text "  │ PQC-enabled OpenPGP operations                      │" -Color $script:UiSilverBlue -Seed 2 -Reveal 0.78 -Selected
-    $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
-    $lines += New-V57BoxLine -Text ("FPR   : {0}" -f $fpr) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text $modeLine -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Crypto: Kyber / ML-KEM hybrid aware" -Seed 3 -Reveal 0.72) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Flow  : Encrypt PQC. Decrypt auto-detect." -Seed 4 -Reveal 0.72) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text $nmsLine -Width $w -Gradient -Bold
-    $lines += New-V57TextLine (New-V57BoxBottom $w) $script:UiBorderBlue
-    $lines += New-V57TextLine "" $script:UiDimSilver
-    $lines += New-NmsSentenceGradientLineV62 -Text ("  Build {0}: live sentence NMS" -f $script:ToolVersion) -Seed 5 -Reveal 0.70 -Bold
-    $lines += New-NmsSentenceLineV62 -Text "  Screen: fixed panels, all menu text animated" -Color $script:UiDimSilver -Seed 6 -Reveal 0.66
-    $lines += New-NmsSentenceLineV62 -Text "  Keys  : chooser, generation, strength profiles" -Color $script:UiDimSilver -Seed 7 -Reveal 0.66
-    $lines += New-V57TextLine "" $script:UiDimSilver
-    $lines += New-V57TextLine "  ───────────────────────────────────────────────────────" $script:UiBorderBlue
-    $lines += New-NmsSentenceGradientLineV62 -Text "  Operator signal" -Seed 8 -Reveal 0.68 -Bold
-    $lines += New-NmsSentenceLineV62 -Text "  Every main-menu sentence is now inside the NMS wave." -Color $script:UiSilverBlue -Seed 9 -Reveal 0.64
-    $lines += New-NmsSentenceLineV62 -Text "  N toggles the live layer. It never changes crypto." -Color $script:UiDimSilver -Seed 10 -Reveal 0.64
-    $lines += New-NmsSentenceLineV62 -Text "  The truth is in the logs. The proof is in the keys." -Color $script:UiDimSilver -Seed 11 -Reveal 0.64
-    return @($lines)
-}
-
-function New-MainMenuRightLines {
-    param(
-        [Parameter(Mandatory=$true)]$Items,
-        [int]$SelectedIndex = 0,
-        [bool]$Pulse = $false,
-        [int]$PanelWidth = 56
-    )
-
-    $arr = @($Items)
-    $lines = @()
-    $ruleLen = [Math]::Max(28, [Math]::Min([int]$PanelWidth, 54))
-    $lines += (New-MenuRenderLine -Segments @(New-GradientSegments -Text (Convert-ToNmsSentenceV62 -Text "Actions" -Seed 20 -Reveal 0.72 -Selected) -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold))
-    $lines += (New-MenuRenderLine -Text ("─" * $ruleLen) -Color $script:UiBorderBlue)
-
-    for ($i = 0; $i -lt $arr.Count; $i++) {
-        $item = $arr[$i]
-        $label = [string]$item.Label
-        $hint = [string]$item.Hint
-        $hintWidth = [Math]::Max(28, $PanelWidth - 8)
-        $hintLines = @(Split-BoxTextLine -Text $hint -Width $hintWidth | Select-Object -First 2)
-        $selected = ($i -eq $SelectedIndex)
-        $seedBase = 100 + ($i * 17)
-
-        if ($selected) {
-            $labelText = "  ▶ {0}" -f (Convert-ToNmsSentenceV62 -Text $label -Seed $seedBase -Reveal 0.78 -Selected)
-            $lines += (New-MenuRenderLine -Text $labelText -Color $script:UiWhiteSilver -BackgroundColor $script:UiHighlightBlue)
-            foreach ($h in $hintLines) {
-                $h2 = Convert-ToNmsSentenceV62 -Text $h -Seed ($seedBase + 3) -Reveal 0.76 -Selected
-                $lines += (New-MenuRenderLine -Text ("    {0}" -f $h2) -Color $script:UiWhiteSilver -BackgroundColor $script:UiDeepBlue)
-            }
-        } else {
-            $labelText = "    {0}" -f (Convert-ToNmsSentenceV62 -Text $label -Seed $seedBase -Reveal 0.66)
-            $lines += (New-MenuRenderLine -Text $labelText -Color ([string]$item.Color))
-            foreach ($h in $hintLines) {
-                $h2 = Convert-ToNmsSentenceV62 -Text $h -Seed ($seedBase + 5) -Reveal 0.62
-                $lines += (New-MenuRenderLine -Text ("    {0}" -f $h2) -Color $script:UiDimSilver)
-            }
-        }
-        if ($i -lt ($arr.Count - 1)) { $lines += (New-MenuRenderLine -Text "" -Color $script:UiDimSilver) }
-    }
-    $lines += (New-MenuRenderLine -Text ("─" * $ruleLen) -Color $script:UiBorderBlue)
-    return @($lines)
-}
-
-function Invoke-MainMenuRightPanel {
-    param(
-        [Parameter(Mandatory=$true)]$HeaderLines,
-        [Parameter(Mandatory=$true)]$Items,
-        [int]$SelectedIndex = 0
-    )
-    $itemsArray = @($Items)
-    if ($itemsArray.Count -eq 0) { return "Back" }
-    $oldCursorVisible = $null
-    $firstDraw = $true
-    $lastTotalRows = 0
-    try { $oldCursorVisible = [Console]::CursorVisible; [Console]::CursorVisible = $false } catch { }
-    try {
-        while ($true) {
-            try { $script:V62NmsFrame = [int]$script:V62NmsFrame + 1 } catch { $script:V62NmsFrame = 1 }
-            $windowWidth = Get-V57WindowWidth
-            $leftWidth = if ($windowWidth -ge 132) { 66 } else { 62 }
-            $rightX = $leftWidth + 2
-            $rightWidth = [Math]::Max(52, $windowWidth - $rightX - 2)
-            $modeText = if (Test-ShareableOutput) { "Shareable" } else { "Private" }
-            $gpgState = if (Test-ShareableOutput) { "hidden" } else { "ready" }
-            $left = @(Get-CompactMainLeftLines -ModeText $modeText -GpgState $gpgState)
-            $right = @(New-MainMenuRightLines -Items $itemsArray -SelectedIndex $SelectedIndex -PanelWidth $rightWidth)
-            $footerRow = [Math]::Max($left.Count, $right.Count) + 1
-            $totalRows = $footerRow + 2
-            if ($firstDraw) { Clear-Host; $firstDraw = $false } else { try { [Console]::SetCursorPosition(0, 0) } catch { Clear-Host } }
-            $emptyLeft = (New-MenuRenderLine -Text "" -Color $script:UiDimSilver)
-            $emptyRight = (New-MenuRenderLine -Text "" -Color $script:UiDimSilver)
-            for ($row = 0; $row -lt $totalRows; $row++) {
-                $lineLeft = if ($row -lt $left.Count) { $left[$row] } else { $emptyLeft }
-                $lineRight = if ($row -lt $right.Count) { $right[$row] } else { $emptyRight }
-                Write-MenuRenderLineAt -Line $lineLeft -X 0 -Y $row -Width $leftWidth
-                Write-MenuRenderLineAt -Line $lineRight -X $rightX -Y $row -Width $rightWidth
-            }
-            if ($lastTotalRows -gt $totalRows) {
-                $blank = (New-MenuRenderLine -Text "" -Color $script:UiDimSilver)
-                for ($row = $totalRows; $row -lt $lastTotalRows; $row++) { Write-MenuRenderLineAt -Line $blank -X 0 -Y $row -Width ([Math]::Max(20, $windowWidth - 1)) }
-            }
-            $lastTotalRows = $totalRows
-            $footerBase = "Use arrows. ENTER opens. N toggles NMS. Q exits."
-            $footerText = Convert-ToNmsSentenceV62 -Text $footerBase -Seed 777 -Reveal 0.70
-            $footer = (New-MenuRenderLine -Text $footerText -Color $script:UiDimBone)
-            Write-MenuRenderLineAt -Line $footer -X 0 -Y $footerRow -Width ([Math]::Min($windowWidth - 1, 126))
-            try { [Console]::SetCursorPosition(0, $footerRow + 1) } catch { }
-
-            $key = $null
-            try {
-                $delayMs = if ([bool]$script:LiveNmsMenuEnabled) { [int]$script:V62NmsFrameDelayMs } else { 250000 }
-                if ([bool]$script:LiveNmsMenuEnabled) {
-                    $until = (Get-Date).AddMilliseconds($delayMs)
-                    while ((Get-Date) -lt $until) {
-                        if ([Console]::KeyAvailable) { $key = [Console]::ReadKey($true); break }
-                        Start-Sleep -Milliseconds 10
-                    }
-                    if ($null -eq $key) { continue }
-                } else {
-                    $key = [Console]::ReadKey($true)
-                }
-            } catch { return (Invoke-ConsoleMenu -Title "Main menu" -HeaderLines $HeaderLines -Items $itemsArray -Layout "Vertical" -SelectedIndex $SelectedIndex) }
-            if (Test-BlockedControlQuitKey -KeyInfo $key) { Write-QuitGuardNotice; $firstDraw = $true; continue }
-            switch ($key.Key) {
-                "LeftArrow"  { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta -1; Clear-PendingConsoleKeys }
-                "UpArrow"    { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta -1; Clear-PendingConsoleKeys }
-                "RightArrow" { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta 1; Clear-PendingConsoleKeys }
-                "DownArrow"  { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta 1; Clear-PendingConsoleKeys }
-                "Enter"      { return [string]$itemsArray[$SelectedIndex].Value }
-                "Escape"     { continue }
-                default {
-                    $ch = [string]$key.KeyChar
-                    if ($ch -eq "q" -or $ch -eq "Q") { return "Quit" }
-                    if ($ch -eq "n" -or $ch -eq "N") { $script:LiveNmsMenuEnabled = -not [bool]$script:LiveNmsMenuEnabled; continue }
-                    if (-not [string]::IsNullOrWhiteSpace($ch)) {
-                        foreach ($item in $itemsArray) {
-                            if ($ch -eq [string]$item.Shortcut) { return [string]$item.Value }
-                            if ($ch.ToLowerInvariant() -eq ([string]$item.Shortcut).ToLowerInvariant()) { return [string]$item.Value }
-                        }
-                    }
-                }
-            }
-        }
-    } finally { try { if ($null -ne $oldCursorVisible) { [Console]::CursorVisible = [bool]$oldCursorVisible } } catch { } }
-}
 
 function Main-Menu {
     while ($true) {
@@ -4821,7 +4608,7 @@ function Main-Menu {
             (New-ConsoleMenuItem -Label "Export keys" -Value "Export" -Hint "Export public certificates or protected secret material." -Color $script:UiWhiteSilver -Shortcut "8"),
             (New-ConsoleMenuItem -Label "About" -Value "About" -Hint "Open the operator notes, scoring rules, controls and security model." -Color $script:UiSilverBlue -Shortcut "9"),
             (New-ConsoleMenuItem -Label "Admin settings" -Value "Admin" -Hint "Safety-confirmed settings, output mode, identity administration and defaults." -Color $script:UiMidBlue -Shortcut "0"),
-            (New-ConsoleMenuItem -Label "Quit" -Value "Quit" -Hint "Close the tool cleanly." -Color $script:UiWhiteSilver -Shortcut "q")
+            (New-ConsoleMenuItem -Label "Quit" -Value "Quit" -Hint "Press Enter to close the tool cleanly." -Color $script:UiWhiteSilver)
         )
         $choice = Invoke-MainMenuRightPanel -HeaderLines $header -Items $items
         switch ($choice) {
@@ -4841,9 +4628,6 @@ function Main-Menu {
         }
     }
 }
-
-
-
 
 
 # === v63 CONFIG, KEY INVENTORY, OUTPUT FOLDER, AND KEYGEN REPAIR LAYER ===
@@ -5293,7 +5077,7 @@ function Invoke-GpgFullGenerateKeyWizardV63 {
         $args = @()
         $args += @(Get-GpgBaseArgumentsV63)
         $args += "--full-generate-key"
-        & $script:GpgPath @args
+        Start-OqgInteractiveGpg -Arguments $args
     } catch {
         Write-Host $_.Exception.Message -ForegroundColor $script:UiLightBlue
     }
@@ -5322,7 +5106,7 @@ function Generate-PqcKeyWorkflow {
     Write-Host "     use option 16, ECC and Kyber, exactly as shown by your gpg.exe" -ForegroundColor $script:UiDimSilver
     Write-Host ""
     $defaultProfile = Get-KeyGenProfileFromConfigV63
-    $profile = (Read-Host ("Choose profile [{0}]" -f $defaultProfile)).Trim()
+    $profile = (Read-OqgPrompt ("Choose profile [{0}]" -f $defaultProfile)).Trim()
     if ([string]::IsNullOrWhiteSpace($profile)) { $profile = $defaultProfile }
     if ($profile -eq "7") { Invoke-GpgFullGenerateKeyWizardV63; return }
 
@@ -5341,7 +5125,7 @@ function Generate-PqcKeyWorkflow {
             Write-Host "  3. ky1024_bp384       Kyber 1024 bp384, GPG Kyber menu option 2" -ForegroundColor $script:UiSilverBlue
             Write-Host "  4. ky768_cv25519      Kyber 768 X25519, GPG Kyber menu option 3" -ForegroundColor $script:UiSilverBlue
             Write-Host "  5. ky1024_cv448       Kyber 1024 X448, GPG Kyber menu option 4" -ForegroundColor $script:UiSilverBlue
-            $mix = (Read-Host "Choose subkeys [4]").Trim()
+            $mix = (Read-OqgPrompt "Choose subkeys [4]").Trim()
             if ([string]::IsNullOrWhiteSpace($mix)) { $mix = "4" }
             $subAlgos = @()
             foreach ($part in ($mix -split ',')) {
@@ -5361,13 +5145,13 @@ function Generate-PqcKeyWorkflow {
     }
 
     Write-Host ""
-    $name = (Read-Host "Name").Trim()
-    $email = (Read-Host "Email").Trim()
-    $comment = (Read-Host "Comment, optional").Trim()
+    $name = (Read-OqgPrompt "Name").Trim()
+    $email = (Read-OqgPrompt "Email").Trim()
+    $comment = (Read-OqgPrompt "Comment, optional").Trim()
     if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($email)) { Write-Host "Name and email are required." -ForegroundColor $script:UiLightBlue; Wait-User; return }
     $uid = if ([string]::IsNullOrWhiteSpace($comment)) { "{0} <{1}>" -f $name, $email } else { "{0} ({1}) <{2}>" -f $name, $comment, $email }
     $expiryDefault = [string](Get-ScriptVariableValueV63 -Name "DefaultKeyExpiry" -Default "2y")
-    $expiry = (Read-Host ("Expiration [{0}]" -f $expiryDefault)).Trim()
+    $expiry = (Read-OqgPrompt ("Expiration [{0}]" -f $expiryDefault)).Trim()
     if ([string]::IsNullOrWhiteSpace($expiry)) { $expiry = $expiryDefault }
     $script:DefaultKeyExpiry = $expiry
 
@@ -5544,7 +5328,7 @@ function Encrypt-FileWorkflow {
     Write-Host "Default output:" -ForegroundColor Gray
     Write-Host "  $(Format-DisplayPath $defaultOut)" -ForegroundColor White
     $outPath = $defaultOut
-    if (-not (Read-YesNo "Use this output path?" $true)) { $custom = (Read-Host "Output path").Trim('"'); if (-not [string]::IsNullOrWhiteSpace($custom)) { $outPath = $custom } }
+    if (-not (Read-YesNo "Use this output path?" $true)) { $custom = (Read-OqgPrompt "Output path").Trim('"'); if (-not [string]::IsNullOrWhiteSpace($custom)) { $outPath = $custom } }
     $gpgArgs = @("--yes", "--trust-model", "always")
     # GnuPG 2.5+ can enforce that every recipient uses a composite
     # Kyber/ML-KEM encryption key. Disable this policy in the config only when
@@ -5573,6 +5357,7 @@ function Encrypt-TextWorkflow {
     if (-not $subkey) { return }
     $recipient = "{0}!" -f ([string]$subkey.Fingerprint)
     $plain = Read-MultilineTextBlock -Title "Text to encrypt"
+    if ($null -eq $plain) { return }
     if ([string]::IsNullOrWhiteSpace($plain)) { Write-Host "No text entered. Encryption cancelled." -ForegroundColor $script:UiDimSilver; Wait-User; return }
     $sign = Read-YesNo "Also sign the encrypted text with this active key?" $true
     $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -5581,7 +5366,7 @@ function Encrypt-TextWorkflow {
     Write-Host "Default output:" -ForegroundColor $script:UiDimSilver
     Write-Host "  $(Format-DisplayPath $defaultOut)" -ForegroundColor White
     $outPath = $defaultOut
-    if (-not (Read-YesNo "Use this output path?" $true)) { $custom = (Read-Host "Output path").Trim('"'); if (-not [string]::IsNullOrWhiteSpace($custom)) { $outPath = $custom } }
+    if (-not (Read-YesNo "Use this output path?" $true)) { $custom = (Read-OqgPrompt "Output path").Trim('"'); if (-not [string]::IsNullOrWhiteSpace($custom)) { $outPath = $custom } }
     $tmpIn = Join-Path ([System.IO.Path]::GetTempPath()) ("oqg_plain_{0}.txt" -f ([guid]::NewGuid().ToString("N")))
     try {
         [System.IO.File]::WriteAllText($tmpIn, $plain, [System.Text.UTF8Encoding]::new($false))
@@ -5609,6 +5394,7 @@ function Decrypt-TextWorkflow {
     Write-Banner -Title "Decrypt OpenPGP text"
     Write-Host "Paste an ASCII-armored OpenPGP message or encrypted block." -ForegroundColor $script:UiDimSilver
     $cipher = Read-MultilineTextBlock -Title "Text to decrypt"
+    if ($null -eq $cipher) { return }
     if ([string]::IsNullOrWhiteSpace($cipher)) { Write-Host "No text entered. Decryption cancelled." -ForegroundColor $script:UiDimSilver; Wait-User; return }
     $tmpIn = Join-Path ([System.IO.Path]::GetTempPath()) ("oqg_cipher_{0}.asc" -f ([guid]::NewGuid().ToString("N")))
     $tmpOut = Join-Path ([System.IO.Path]::GetTempPath()) ("oqg_decrypted_{0}.txt" -f ([guid]::NewGuid().ToString("N")))
@@ -5622,7 +5408,7 @@ function Decrypt-TextWorkflow {
             if (Read-YesNo "Save decrypted text to a file?" $false) {
                 $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
                 $defaultOut = Get-NonClobberPath -Path (Join-Path (Get-OutputFolderV63) ("openpgp_quantum_guard_decrypted_text_{0}.txt" -f $stamp))
-                $savePath = (Read-Host "Output path [$defaultOut]").Trim('"')
+                $savePath = (Read-OqgPrompt "Output path [$defaultOut]").Trim('"')
                 if ([string]::IsNullOrWhiteSpace($savePath)) { $savePath = $defaultOut }
                 [System.IO.File]::WriteAllText($savePath, $plain, [System.Text.UTF8Encoding]::new($false))
                 Write-Host "Saved:" -ForegroundColor $script:UiWhiteSilver
@@ -5633,42 +5419,8 @@ function Decrypt-TextWorkflow {
     Wait-User
 }
 
-function Show-AboutSection {
-    Write-Banner -Title "About OpenPGP Quantum Guard"
-    Write-GradientLine -Text "  CONFIGURED OPERATOR CONSOLE" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Config file   : {0}" -f (Format-DisplayPath (Get-ConfigPathV63))) -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-V46GradientWrappedText -Text ("PGP folder    : {0}" -f (Format-DisplayPath $script:DefaultStartFolder)) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Output folder : {0}" -f (Format-DisplayPath (Get-OutputFolderV63))) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("GnuPG home    : {0}" -f $(if ([string]::IsNullOrWhiteSpace([string]$script:GpgHome)) { "default user keyring" } else { Format-DisplayPath $script:GpgHome })) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-Host ""
-
-    Write-GradientLine -Text "  IMPORTANT FIXES IN v63" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Key recognition fix: the tool no longer ignores a generated key just because ownertrust is unknown. A local private key is enough for selection unless KeySelectableRequiresUltimateTrust is set to true in the JSON config." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-V46GradientWrappedText -Text "Keygen verification fix: when Kyber is selected, the script verifies the requested Kyber subkey after generation. If GnuPG produced only a classic key, the tool warns and shows the actual detected algorithms." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-V46GradientWrappedText -Text "Portable config fix: copied scripts no longer carry a hardcoded workplace or home path as the real default. First run creates openpgp_quantum_guard.config.json beside the script." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-
-    Write-GradientLine -Text "  GnuPG KYBER MENU MAPPING" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "GnuPG key type 16 means ECC and Kyber. The script maps Kyber menu option 1 to ky768_bp256, option 2 to ky1024_bp384, option 3 to ky768_cv25519, and option 4 to ky1024_cv448." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Default profile is LOCAL_PQC_KYBER1024_X448, which creates an Ed25519 identity and requests ky1024_cv448 as the encryption subkey." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-Host ""
-
-    Write-GradientLine -Text "  OUTPUT ROUTING" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Encrypt, decrypt, encrypted text, and saved decrypted text now use OutputFolder from the config file. This keeps user data away from the script folder and makes the tool easier to deploy to another machine." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-Host ""
-
-    Write-GradientLine -Text "  SECURITY MODEL" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "The config file is for folders, GnuPG location, active fingerprint, output mode, and UI defaults. It must not contain real OpenPGP private-key passphrases. GnuPG pinentry remains responsible for private-key passphrases." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Shareable mode still hides local paths in screenshots. Private mode shows more diagnostics for troubleshooting." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-Host ""
-
-    Write-GradientLine -Text "  CONTROLS" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Use arrows to move, ENTER to open, N to toggle the live No More Secrets layer on the main screen, and Q to quit cleanly." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Wait-User
-}
 
 # === END v63 REPAIR LAYER ===
-
 
 
 # -----------------------------------------------------------------------------
@@ -5941,58 +5693,6 @@ function Clip-AsciiLineV67 {
     return $safe
 }
 
-function New-LeftMenuLogoRenderLinesV65 {
-    param([int]$Width = 60)
-
-    $lines = @()
-    $raw = @($script:LeftMenuLogoLines)
-    if ($raw.Count -eq 0) { $raw = @(Convert-LogoTextToLinesV67 -Text (Get-DefaultLeftLogoTextV67)) }
-
-    $safeWidth = [Math]::Max(24, [int]$Width)
-    $maxLogoRows = 12
-    try { $maxLogoRows = [Math]::Max(8, [Math]::Min(16, [int]([Console]::WindowHeight / 2))) } catch { }
-    $lines += New-V57GradientLine "  Left screen logo" -Bold
-    foreach ($line in @($raw | Select-Object -First $maxLogoRows)) {
-        $safe = Clip-AsciiLineV67 -Text ([string]$line) -Width ([Math]::Max(10, $safeWidth - 2))
-        $lines += (New-MenuRenderLine -Segments @(New-GradientSegments -Text ("  " + $safe) -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold))
-    }
-    if ($raw.Count -gt $maxLogoRows) {
-        $lines += New-V57TextLine ("  + {0} more logo lines in external file" -f ($raw.Count - $maxLogoRows)) $script:UiDimSilver
-    }
-    $lines += New-V57TextLine "" $script:UiDimSilver
-    return @($lines)
-}
-
-function Get-CompactMainLeftLines {
-    param([string]$ModeText, [string]$GpgState)
-    try { $script:V62NmsFrame = [int]$script:V62NmsFrame + 1 } catch { $script:V62NmsFrame = 1 }
-    $fpr = Short-Fpr $script:IdentityFingerprint
-    $modeLine = ("Mode  : {0}   GnuPG: {1}" -f $ModeText, $GpgState)
-    $w = 60
-    $lines = @()
-    $lines += @(New-LeftMenuLogoRenderLinesV65 -Width $w)
-    $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "OpenPGP Quantum Guard" -Seed 101 -Reveal 0.78 -Selected) -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "PQC-enabled OpenPGP operations" -Seed 102 -Reveal 0.72) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text ("FPR   : {0}" -f $fpr) -Seed 103 -Reveal 0.72) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text $modeLine -Seed 104 -Reveal 0.72) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Crypto: Kyber 1024 X448 default" -Seed 105 -Reveal 0.70) -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Flow  : Encrypt PQC. Decrypt auto-detect." -Seed 106 -Reveal 0.70) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "NMS   : live sentence layer" -Seed 107 -Reveal 0.64) -Width $w -Gradient -Bold
-    $lines += New-V57TextLine (New-V57BoxBottom $w) $script:UiBorderBlue
-    $lines += New-V57TextLine "" $script:UiDimSilver
-    $lines += New-NmsSentenceGradientLineV62 -Text ("  Build {0}: external logos + boot menu" -f $script:ToolVersion) -Seed 108 -Reveal 0.70 -Bold
-    $lines += New-NmsSentenceLineV62 -Text "  Config stores logo file paths, not ASCII arrays." -Color $script:UiDimSilver -Seed 109 -Reveal 0.64
-    $lines += New-NmsSentenceLineV62 -Text "  Edit the .txt logo files without touching JSON syntax." -Color $script:UiDimSilver -Seed 110 -Reveal 0.64
-    return @($lines)
-}
-
-function Get-BootLogoLinesV65 {
-    $raw = @($script:BootMenuLogoLines)
-    if ($raw.Count -eq 0) { $raw = @(Convert-LogoTextToLinesV67 -Text (Get-DefaultBootLogoTextV67)) }
-    return @($raw)
-}
 
 function Write-BootMenuBoxLineV67 {
     param(
@@ -6018,46 +5718,6 @@ function Write-BootMenuBoxLineV67 {
     Write-MenuRichLine -Segments $segments
 }
 
-function Show-StartupBootScreenV51 {
-    Clear-Host
-    Clear-PendingConsoleInputV56
-    $screenWidth = Get-V57WindowWidth
-    $maxWidth = [Math]::Max(70, [Math]::Min(132, $screenWidth - 1))
-    foreach ($line in @(Get-BootLogoLinesV65)) {
-        $safe = Clip-AsciiLineV67 -Text ([string]$line) -Width $maxWidth
-        Write-GradientFixedLineV56 -Text $safe -StartRgb $script:GradientBlueStart -EndRgb $script:GradientBlueEnd -Bold
-        Start-Sleep -Milliseconds 6
-    }
-    Write-Host ""
-    $boxWidth = [Math]::Max(78, [Math]::Min(114, $screenWidth - 4))
-    $rule = "─" * ($boxWidth - 4)
-    Write-Host ("  ┌{0}┐" -f $rule) -ForegroundColor $script:UiBorderBlue
-    Write-BootMenuBoxLineV67 -Label "BOOT MENU" -Value ([string]$script:BootMenuTitle) -Width $boxWidth -Highlight
-    Write-BootMenuBoxLineV67 -Label "Operator" -Value ([string]$script:BootMenuSubtitle) -Width $boxWidth
-    Write-BootMenuBoxLineV67 -Label "Build" -Value "v67 external-logo runtime" -Width $boxWidth -Highlight
-    Write-BootMenuBoxLineV67 -Label "Config" -Value (Format-DisplayPath (Get-ConfigPathV63)) -Width $boxWidth
-    Write-BootMenuBoxLineV67 -Label "PGP folder" -Value (Format-DisplayPath $script:DefaultStartFolder) -Width $boxWidth
-    Write-BootMenuBoxLineV67 -Label "Output folder" -Value (Format-DisplayPath (Get-OutputFolderV63)) -Width $boxWidth
-    Write-BootMenuBoxLineV67 -Label "Key profile" -Value ([string]$script:DefaultKeyProfile) -Width $boxWidth -Highlight
-    Write-BootMenuBoxLineV67 -Label "Boot logo" -Value (Format-DisplayPath $script:BootLogoPath) -Width $boxWidth
-    Write-BootMenuBoxLineV67 -Label "Left logo" -Value (Format-DisplayPath $script:LeftMenuLogoPath) -Width $boxWidth
-    $gpgHomeText = if ([string]::IsNullOrWhiteSpace([string]$script:GpgHome)) { "default user keyring" } else { Format-DisplayPath $script:GpgHome }
-    Write-BootMenuBoxLineV67 -Label "GnuPG home" -Value $gpgHomeText -Width $boxWidth
-    Write-Host ("  └{0}┘" -f $rule) -ForegroundColor $script:UiBorderBlue
-    Write-Host ""
-
-    $progressRow = 0
-    try { $progressRow = [Console]::CursorTop } catch { $progressRow = 0 }
-    for ($p = 0; $p -le 100; $p += 2) {
-        Clear-PendingConsoleInputV56
-        Write-BootProgressAtV57 -Row $progressRow -Percent $p -Label (Get-BootStageLabelV56 -Percent $p)
-        Start-Sleep -Milliseconds 24
-    }
-    Write-BootProgressAtV57 -Row $progressRow -Percent 100 -Label "ready"
-    try { [Console]::SetCursorPosition(0, $progressRow + 2) } catch { Write-Host "" }
-    Write-GradientFixedLineV56 -Text "  ENTER continues. Edit the external logo .txt files, not the JSON, to change the art." -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    if ([bool]$script:BootWaitForEnter) { Wait-ForEnterOnlyV56 }
-}
 
 function Initialize-ActiveIdentityV44 {
     Load-ConfigV51
@@ -6066,7 +5726,8 @@ function Initialize-ActiveIdentityV44 {
     Write-V46GradientWrappedText -Text ("Config: {0}" -f (Format-DisplayPath $script:ConfigPath)) -Indent "  " -Width 110 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
     Write-V46GradientWrappedText -Text ("PGP folder: {0}" -f (Format-DisplayPath $script:DefaultStartFolder)) -Indent "  " -Width 110 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
     Write-V46GradientWrappedText -Text ("Output folder: {0}" -f (Format-DisplayPath $script:OutputFolder)) -Indent "  " -Width 110 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Logo files: {0} / {1}" -f (Format-DisplayPath $script:BootLogoPath), (Format-DisplayPath $script:LeftMenuLogoPath)) -Indent "  " -Width 110 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
+    Write-V46GradientWrappedText -Text ("Boot logo : {0}" -f (Split-Path -Leaf $script:BootLogoPath)) -Indent "  " -Width 110 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
+    Write-V46GradientWrappedText -Text ("Menu logo : {0}" -f (Split-Path -Leaf $script:LeftMenuLogoPath)) -Indent "  " -Width 110 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
     $inventory = @(Get-KeyInventoryV44)
     if ($inventory.Count -eq 0) {
         Write-V46GradientWrappedText -Text "No OpenPGP keys were found in this GnuPG home." -Indent "  " -Width 110 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
@@ -6087,34 +5748,6 @@ function Initialize-ActiveIdentityV44 {
         if ($chosenKey.Count -gt 0) { $script:ExpectedUidHint = [string]$chosenKey[0].PrimaryUid }
         Save-Config
     }
-}
-
-function Show-AboutSection {
-    Write-Banner -Title "About OpenPGP Quantum Guard"
-    Write-GradientLine -Text "  V67 EXTERNAL LOGO SYSTEM" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Important: the config now stores only logo file paths. The ASCII art lives in external .txt files, so broken quotes, pipes, or missing commas in JSON cannot break the script parser." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-V46GradientWrappedText -Text ("Boot logo file : {0}" -f (Format-DisplayPath $script:BootLogoPath)) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Left logo file : {0}" -f (Format-DisplayPath $script:LeftMenuLogoPath)) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-Host ""
-
-    Write-GradientLine -Text "  CONFIGURED OPERATOR CONSOLE" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Config file   : {0}" -f (Format-DisplayPath (Get-ConfigPathV63))) -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-V46GradientWrappedText -Text ("PGP folder    : {0}" -f (Format-DisplayPath $script:DefaultStartFolder)) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Output folder : {0}" -f (Format-DisplayPath (Get-OutputFolderV63))) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-Host ""
-
-    Write-GradientLine -Text "  KEYGEN DEFAULT" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Default profile is {0}. This maps to GnuPG key type 16, Kyber option 4, Kyber 1024 X448." -f $script:DefaultKeyProfile) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-
-    Write-GradientLine -Text "  SECURITY MODEL" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "The config file controls paths, display logo files, active fingerprint, output mode, and keygen defaults. It must never contain real private-key passphrases." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "GnuPG pinentry remains responsible for unlocking private keys only when a cryptographic operation needs them." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-Host ""
-
-    Write-GradientLine -Text "  EDITING NOTES" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "To change the boot or left-menu art, edit the logo .txt files directly. Keep the art narrow for best layout. The renderer hard-clips over-wide lines instead of inserting ellipsis inside ASCII art." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Wait-User
 }
 
 
@@ -6197,233 +5830,6 @@ function Convert-ToNmsSentenceV62 {
     return $sb.ToString()
 }
 
-function New-LeftMenuLogoRenderLinesV65 {
-    param([int]$Width = 60)
-
-    $safeWidth = [Math]::Max(24, [int]$Width)
-    $raw = @($script:LeftMenuLogoLines | Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace([string]$_) })
-    if ($raw.Count -eq 0) { $raw = @(Convert-LogoTextToLinesV67 -Text (Get-CompactLeftLogoTextV68)) }
-
-    # Remove accidental labels from the logo file. The left panel already gives context.
-    $raw = @($raw | Where-Object { ([string]$_).Trim() -notmatch '^(?i)left\s+screen\s+logo$' })
-
-    $maxRawLength = 0
-    foreach ($line in @($raw)) { if (([string]$line).Length -gt $maxRawLength) { $maxRawLength = ([string]$line).Length } }
-
-    $windowHeight = Get-VisibleWindowHeightV68
-    $maxLogoRows = if ($windowHeight -ge 38) { 6 } elseif ($windowHeight -ge 30) { 5 } else { 4 }
-
-    $tooWide = ($maxRawLength -gt ($safeWidth - 2))
-    $tooTall = ($raw.Count -gt ($maxLogoRows + 2))
-    if ([bool]$script:LeftLogoUseCompactWhenOversized -and ($tooWide -or $tooTall)) {
-        $raw = @(Convert-LogoTextToLinesV67 -Text (Get-CompactLeftLogoTextV68))
-    }
-
-    $lines = @()
-    foreach ($line in @($raw | Select-Object -First $maxLogoRows)) {
-        $safe = Clip-AsciiLineV67 -Text ([string]$line) -Width ([Math]::Max(10, $safeWidth - 2))
-        $lines += (New-MenuRenderLine -Segments @(New-GradientSegments -Text ("  " + $safe) -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold))
-    }
-    $lines += New-V57TextLine "" $script:UiDimSilver
-    return @($lines)
-}
-
-function Get-CompactMainLeftLines {
-    param([string]$ModeText, [string]$GpgState)
-    try { $script:V62NmsFrame = [int]$script:V62NmsFrame + 1 } catch { $script:V62NmsFrame = 1 }
-
-    $windowWidth = Get-VisibleWindowWidthV68
-    $windowHeight = Get-VisibleWindowHeightV68
-    $w = if ($windowWidth -ge 150) { 62 } elseif ($windowWidth -ge 120) { 56 } else { 52 }
-    $fpr = Short-Fpr $script:IdentityFingerprint
-    $modeLine = ("Mode  : {0}   GnuPG: {1}" -f $ModeText, $GpgState)
-
-    $lines = @()
-    $lines += @(New-LeftMenuLogoRenderLinesV65 -Width $w)
-    $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "OpenPGP Quantum Guard" -Seed 101 -Reveal 0.94 -Selected) -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "PQC-enabled OpenPGP operations" -Seed 102 -Reveal 0.93 -Selected) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text ("FPR   : {0}" -f $fpr) -Seed 103 -Reveal 0.91) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text $modeLine -Seed 104 -Reveal 0.91) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Crypto: Kyber 1024 X448 default" -Seed 105 -Reveal 0.90) -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Flow  : Encrypt PQC. Decrypt auto-detect." -Seed 106 -Reveal 0.90) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "NMS   : live readable sentence layer" -Seed 107 -Reveal 0.89) -Width $w -Gradient -Bold
-    $lines += New-V57TextLine (New-V57BoxBottom $w) $script:UiBorderBlue
-    $lines += New-V57TextLine "" $script:UiDimSilver
-    $lines += New-NmsSentenceGradientLineV62 -Text ("  Build {0}: compact logo + readable NMS" -f $script:ToolVersion) -Seed 108 -Reveal 0.90 -Bold
-    $lines += New-NmsSentenceLineV62 -Text "  NMS is active on main-menu sentences." -Color $script:UiDimSilver -Seed 109 -Reveal 0.88
-    $lines += New-NmsSentenceLineV62 -Text "  Oversized left logos collapse to a safe compact mark." -Color $script:UiDimSilver -Seed 110 -Reveal 0.88
-
-    if ($windowHeight -ge 34) {
-        $lines += New-V57TextLine "" $script:UiDimSilver
-        $lines += New-NmsSentenceLineV62 -Text "  The truth is in the logs. The proof is in the keys." -Color $script:UiDimSilver -Seed 111 -Reveal 0.88
-    }
-    return @($lines)
-}
-
-function New-MainMenuRightLines {
-    param(
-        [Parameter(Mandatory=$true)]$Items,
-        [int]$SelectedIndex = 0,
-        [bool]$Pulse = $false,
-        [int]$PanelWidth = 56,
-        [bool]$ShowAllHints = $true
-    )
-
-    $arr = @($Items)
-    $lines = @()
-    $ruleLen = [Math]::Max(28, [Math]::Min([int]$PanelWidth, 54))
-    $lines += (New-MenuRenderLine -Segments @(New-GradientSegments -Text (Convert-ToNmsSentenceV62 -Text "Actions" -Seed 20 -Reveal 0.94 -Selected) -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold))
-    $lines += (New-MenuRenderLine -Text ("─" * $ruleLen) -Color $script:UiBorderBlue)
-
-    for ($i = 0; $i -lt $arr.Count; $i++) {
-        $item = $arr[$i]
-        $label = [string]$item.Label
-        $hint = [string]$item.Hint
-        $hintWidth = [Math]::Max(26, $PanelWidth - 8)
-        $hintLines = @(Split-BoxTextLine -Text $hint -Width $hintWidth | Select-Object -First 1)
-        $selected = ($i -eq $SelectedIndex)
-        $seedBase = 100 + ($i * 17)
-
-        if ($selected) {
-            $labelText = "  ▶ {0}" -f (Convert-ToNmsSentenceV62 -Text $label -Seed $seedBase -Reveal 0.95 -Selected)
-            $lines += (New-MenuRenderLine -Text $labelText -Color $script:UiWhiteSilver -BackgroundColor $script:UiHighlightBlue)
-            foreach ($h in $hintLines) {
-                $h2 = Convert-ToNmsSentenceV62 -Text $h -Seed ($seedBase + 3) -Reveal 0.94 -Selected
-                $lines += (New-MenuRenderLine -Text ("    {0}" -f $h2) -Color $script:UiWhiteSilver -BackgroundColor $script:UiDeepBlue)
-            }
-        } else {
-            $labelText = "    {0}" -f (Convert-ToNmsSentenceV62 -Text $label -Seed $seedBase -Reveal 0.90)
-            $lines += (New-MenuRenderLine -Text $labelText -Color ([string]$item.Color))
-            if ($ShowAllHints) {
-                foreach ($h in $hintLines) {
-                    $h2 = Convert-ToNmsSentenceV62 -Text $h -Seed ($seedBase + 5) -Reveal 0.88
-                    $lines += (New-MenuRenderLine -Text ("    {0}" -f $h2) -Color $script:UiDimSilver)
-                }
-            }
-        }
-    }
-    $lines += (New-MenuRenderLine -Text ("─" * $ruleLen) -Color $script:UiBorderBlue)
-    return @($lines)
-}
-
-function Invoke-MainMenuRightPanel {
-    param(
-        [Parameter(Mandatory=$true)]$HeaderLines,
-        [Parameter(Mandatory=$true)]$Items,
-        [int]$SelectedIndex = 0
-    )
-    $itemsArray = @($Items)
-    if ($itemsArray.Count -eq 0) { return "Back" }
-    $oldCursorVisible = $null
-    $firstDraw = $true
-    $lastTotalRows = 0
-    try { $oldCursorVisible = [Console]::CursorVisible; [Console]::CursorVisible = $false } catch { }
-    try {
-        while ($true) {
-            try { $script:V62NmsFrame = [int]$script:V62NmsFrame + 1 } catch { $script:V62NmsFrame = 1 }
-            $windowWidth = Get-VisibleWindowWidthV68
-            $windowHeight = Get-VisibleWindowHeightV68
-
-            if ($windowWidth -lt 105) {
-                return (Invoke-ConsoleMenu -Title "Main menu" -HeaderLines $HeaderLines -Items $itemsArray -Layout "Vertical" -SelectedIndex $SelectedIndex)
-            }
-
-            $leftWidth = if ($windowWidth -ge 150) { 64 } elseif ($windowWidth -ge 125) { 58 } else { 54 }
-            $rightX = $leftWidth + 2
-            $rightWidth = [Math]::Max(44, $windowWidth - $rightX - 2)
-            $showAllHints = ($windowHeight -ge 34)
-
-            $modeText = if (Test-ShareableOutput) { "Shareable" } else { "Private" }
-            $gpgState = if (Test-ShareableOutput) { "hidden" } else { "ready" }
-            $left = @(Get-CompactMainLeftLines -ModeText $modeText -GpgState $gpgState)
-            $right = @(New-MainMenuRightLines -Items $itemsArray -SelectedIndex $SelectedIndex -PanelWidth $rightWidth -ShowAllHints:$showAllHints)
-            $footerRow = [Math]::Max($left.Count, $right.Count) + 1
-            $totalRows = $footerRow + 2
-
-            if ($footerRow -gt ($windowHeight - 3)) {
-                $showAllHints = $false
-                $right = @(New-MainMenuRightLines -Items $itemsArray -SelectedIndex $SelectedIndex -PanelWidth $rightWidth -ShowAllHints:$false)
-                $footerRow = [Math]::Max($left.Count, $right.Count) + 1
-                $totalRows = $footerRow + 2
-            }
-
-            if ($firstDraw) { Clear-Host; $firstDraw = $false } else { try { [Console]::SetCursorPosition(0, 0) } catch { Clear-Host } }
-            $emptyLeft = (New-MenuRenderLine -Text "" -Color $script:UiDimSilver)
-            $emptyRight = (New-MenuRenderLine -Text "" -Color $script:UiDimSilver)
-            for ($row = 0; $row -lt $totalRows; $row++) {
-                $lineLeft = if ($row -lt $left.Count) { $left[$row] } else { $emptyLeft }
-                $lineRight = if ($row -lt $right.Count) { $right[$row] } else { $emptyRight }
-                Write-MenuRenderLineAt -Line $lineLeft -X 0 -Y $row -Width $leftWidth
-                Write-MenuRenderLineAt -Line $lineRight -X $rightX -Y $row -Width $rightWidth
-            }
-            if ($lastTotalRows -gt $totalRows) {
-                $blank = (New-MenuRenderLine -Text "" -Color $script:UiDimSilver)
-                for ($row = $totalRows; $row -lt $lastTotalRows; $row++) { Write-MenuRenderLineAt -Line $blank -X 0 -Y $row -Width ([Math]::Max(20, $windowWidth - 1)) }
-            }
-            $lastTotalRows = $totalRows
-            $footerBase = if ($showAllHints) { "Use arrows. ENTER opens. N toggles readable NMS. Q exits." } else { "Use arrows. ENTER opens. N toggles NMS. Q exits. Hints compacted for screen height." }
-            $footerText = Convert-ToNmsSentenceV62 -Text $footerBase -Seed 777 -Reveal 0.92
-            $footer = (New-MenuRenderLine -Text $footerText -Color $script:UiDimBone)
-            Write-MenuRenderLineAt -Line $footer -X 0 -Y $footerRow -Width ([Math]::Min($windowWidth - 1, 126))
-            try { [Console]::SetCursorPosition(0, $footerRow + 1) } catch { }
-
-            $key = $null
-            try {
-                if ([bool]$script:LiveNmsMenuEnabled) {
-                    $until = (Get-Date).AddMilliseconds([int]$script:V62NmsFrameDelayMs)
-                    while ((Get-Date) -lt $until) {
-                        if ([Console]::KeyAvailable) { $key = [Console]::ReadKey($true); break }
-                        Start-Sleep -Milliseconds 12
-                    }
-                    if ($null -eq $key) { continue }
-                } else { $key = [Console]::ReadKey($true) }
-            } catch { return (Invoke-ConsoleMenu -Title "Main menu" -HeaderLines $HeaderLines -Items $itemsArray -Layout "Vertical" -SelectedIndex $SelectedIndex) }
-            if (Test-BlockedControlQuitKey -KeyInfo $key) { Write-QuitGuardNotice; $firstDraw = $true; continue }
-            switch ($key.Key) {
-                "LeftArrow"  { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta -1; Clear-PendingConsoleKeys }
-                "UpArrow"    { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta -1; Clear-PendingConsoleKeys }
-                "RightArrow" { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta 1; Clear-PendingConsoleKeys }
-                "DownArrow"  { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta 1; Clear-PendingConsoleKeys }
-                "Enter"      { return [string]$itemsArray[$SelectedIndex].Value }
-                "Escape"     { continue }
-                default {
-                    $ch = [string]$key.KeyChar
-                    if ($ch -eq "q" -or $ch -eq "Q") { return "Quit" }
-                    if ($ch -eq "n" -or $ch -eq "N") { $script:LiveNmsMenuEnabled = -not [bool]$script:LiveNmsMenuEnabled; Save-Config; continue }
-                    if (-not [string]::IsNullOrWhiteSpace($ch)) {
-                        foreach ($item in $itemsArray) {
-                            if ($ch -eq [string]$item.Shortcut) { return [string]$item.Value }
-                            if ($ch.ToLowerInvariant() -eq ([string]$item.Shortcut).ToLowerInvariant()) { return [string]$item.Value }
-                        }
-                    }
-                }
-            }
-        }
-    } finally { try { if ($null -ne $oldCursorVisible) { [Console]::CursorVisible = [bool]$oldCursorVisible } } catch { } }
-}
-
-function Show-AboutSection {
-    Write-Banner -Title "About OpenPGP Quantum Guard"
-    Write-GradientLine -Text "  V68 RESPONSIVE LOGO AND READABLE NMS" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Important: the left-menu renderer now protects the layout. If the external logo is too wide or too tall, the main menu uses a compact safe logo instead of clipping broken ASCII art." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-V46GradientWrappedText -Text "NMS is still live across the main menu sentences, but v68 keeps most characters readable and moves a thin encrypted band across the text." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-    Write-GradientLine -Text "  EXTERNAL LOGO FILES" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Boot logo file : {0}" -f (Format-DisplayPath $script:BootLogoPath)) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Left logo file : {0}" -f (Format-DisplayPath $script:LeftMenuLogoPath)) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Tip: use a compact left logo, around 28-42 characters wide and 3-6 lines high. Large figlet logos are better for the boot logo, not the left panel." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-    Write-GradientLine -Text "  KEYGEN DEFAULT" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Default profile is {0}. This maps to GnuPG key type 16, Kyber option 4, Kyber 1024 X448." -f $script:DefaultKeyProfile) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-    Write-GradientLine -Text "  SECURITY MODEL" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "The config controls paths, display logo files, active fingerprint, output mode, and keygen defaults. It must never contain real private-key passphrases." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "GnuPG pinentry remains responsible for unlocking private keys only when a cryptographic operation needs them." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Wait-User
-}
-
 
 # -----------------------------------------------------------------------------
 # v69: restore the original ANSI / ASCII left-menu logo hook.
@@ -6491,60 +5897,6 @@ function New-LeftMenuLogoRenderLinesV65 {
     return @($lines)
 }
 
-function Get-CompactMainLeftLines {
-    param([string]$ModeText, [string]$GpgState)
-    try { $script:V62NmsFrame = [int]$script:V62NmsFrame + 1 } catch { $script:V62NmsFrame = 1 }
-
-    $windowWidth = Get-VisibleWindowWidthV68
-    $windowHeight = Get-VisibleWindowHeightV68
-    $w = if ($windowWidth -ge 150) { 62 } elseif ($windowWidth -ge 120) { 56 } else { 52 }
-    $fpr = Short-Fpr $script:IdentityFingerprint
-    $modeLine = ("Mode  : {0}   GnuPG: {1}" -f $ModeText, $GpgState)
-
-    $lines = @()
-    $lines += @(New-LeftMenuLogoRenderLinesV65 -Width $w)
-    $lines += New-V57TextLine (New-V57BoxTop $w) $script:UiBorderBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "OpenPGP Quantum Guard" -Seed 101 -Reveal 0.94 -Selected) -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "PQC-enabled OpenPGP operations" -Seed 102 -Reveal 0.93 -Selected) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57TextLine (New-V57BoxMid $w) $script:UiBorderBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text ("FPR   : {0}" -f $fpr) -Seed 103 -Reveal 0.91) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text $modeLine -Seed 104 -Reveal 0.91) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Crypto: Kyber 1024 X448 default" -Seed 105 -Reveal 0.90) -Width $w -Gradient -Bold
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "Flow  : Encrypt PQC. Decrypt auto-detect." -Seed 106 -Reveal 0.90) -Width $w -Color $script:UiSilverBlue
-    $lines += New-V57BoxLine -Text (Convert-ToNmsSentenceV62 -Text "NMS   : live readable sentence layer" -Seed 107 -Reveal 0.89) -Width $w -Gradient -Bold
-    $lines += New-V57TextLine (New-V57BoxBottom $w) $script:UiBorderBlue
-    $lines += New-V57TextLine "" $script:UiDimSilver
-    $lines += New-NmsSentenceGradientLineV62 -Text ("  Build {0}: portable configuration" -f $script:ToolVersion) -Seed 108 -Reveal 0.90 -Bold
-    $lines += New-NmsSentenceLineV62 -Text "  The original ANSI header is the left-menu default again." -Color $script:UiDimSilver -Seed 109 -Reveal 0.88
-    $lines += New-NmsSentenceLineV62 -Text "  External logo files remain available as fallback art." -Color $script:UiDimSilver -Seed 110 -Reveal 0.88
-
-    if ($windowHeight -ge 34) {
-        $lines += New-V57TextLine "" $script:UiDimSilver
-        $lines += New-NmsSentenceLineV62 -Text "  The truth is in the logs. The proof is in the keys." -Color $script:UiDimSilver -Seed 111 -Reveal 0.88
-    }
-    return @($lines)
-}
-
-function Show-AboutSection {
-    Write-Banner -Title "About OpenPGP Quantum Guard"
-    Write-GradientLine -Text "  V69 ANSI LOGO RESTORE" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Important: the original CustomAnsiHeader logo is restored as the left-menu default. External logo files are still supported, but they no longer replace the ANSI header unless ShowCustomAnsiHeader is disabled." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-V46GradientWrappedText -Text "NMS remains live across the main-menu sentences, with a readable moving band instead of full-line scrambling." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-    Write-GradientLine -Text "  LOGO SOURCES" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Built-in ANSI header : {0}" -f $(if (Test-CustomAnsiHeaderEnabled) { "enabled" } else { "disabled" })) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Boot logo file       : {0}" -f (Format-DisplayPath $script:BootLogoPath)) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Left logo fallback   : {0}" -f (Format-DisplayPath $script:LeftMenuLogoPath)) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Rule: keep the ANSI header for the main left panel. Use the external left logo only when you intentionally disable the built-in header or want fallback art." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-    Write-GradientLine -Text "  KEYGEN DEFAULT" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Default profile is {0}. This maps to GnuPG key type 16, Kyber option 4, Kyber 1024 X448." -f $script:DefaultKeyProfile) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-    Write-GradientLine -Text "  SECURITY MODEL" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "The config controls paths, display logo files, active fingerprint, output mode, and keygen defaults. It must never contain real private-key passphrases." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "GnuPG pinentry remains responsible for unlocking private keys only when a cryptographic operation needs them." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Wait-User
-}
 
 # -----------------------------------------------------------------------------
 # v70: Setup Doctor, config editor, GnuPG capability check, key recognition repair
@@ -6717,6 +6069,10 @@ function Show-SetupDoctorV70 {
             (New-ConsoleMenuItem -Label "Generate key" -Value "Generate" -Hint "Run the key generation assistant again." -Color $script:UiSilverBlue -Shortcut "4"),
             (New-ConsoleMenuItem -Label "Back" -Value "Back" -Hint "Return to main menu." -Color $script:UiDimSilver -Shortcut "b")
         )
+        # OQG-RECOVERY-DOCTOR-PAUSE-V1
+        Write-Host ''
+        [void](Read-OqgPrompt '  Setup Doctor report complete. Press ENTER to open actions')
+        Clear-Host
         $choice = Invoke-ConsoleMenu -Title "Setup Doctor Actions" -Items $items -Layout "Vertical" -Footer "Use arrows. ENTER opens. ESC returns."
         switch ($choice) {
             "Config" { Open-ConfigFileV70; Wait-User; continue }
@@ -6762,27 +6118,6 @@ function Get-CompactMainLeftLines {
     return @($lines)
 }
 
-function Show-AboutSection {
-    Write-Banner -Title "About OpenPGP Quantum Guard"
-    Write-GradientLine -Text "  V70 SETUP DOCTOR" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "New in v70: Setup Doctor checks the config file, PGP folder, output folder, GnuPG path, GnuPG home, active key, selectable keys, trust mode, and PQC capability hints." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-V46GradientWrappedText -Text "This is designed for workplace handoff: run the doctor first, confirm the config paths, confirm GnuPG sees the private key, then generate or choose an active key." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-    Write-GradientLine -Text "  LOGO SOURCES" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Built-in ANSI header : {0}" -f $(if (Test-CustomAnsiHeaderEnabled) { "enabled" } else { "disabled" })) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Boot logo file       : {0}" -f (Format-DisplayPath $script:BootLogoPath)) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Left logo fallback   : {0}" -f (Format-DisplayPath $script:LeftMenuLogoPath)) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "Rule: the original CustomAnsiHeader stays the main left-panel logo. External left logo is fallback art only unless the built-in header is disabled." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-    Write-GradientLine -Text "  KEYGEN DEFAULT" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text ("Default profile is {0}. This maps to GnuPG key type 16, Kyber option 4, Kyber 1024 X448." -f $script:DefaultKeyProfile) -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-V46GradientWrappedText -Text "If quick-add-key does not create a Kyber subkey on a machine, use Generate key, option 7, GnuPG built-in wizard, then select ECC and Kyber and Kyber option 4." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    Write-Host ""
-    Write-GradientLine -Text "  SECURITY MODEL" -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "The config controls paths, display logo files, active fingerprint, output mode, and keygen defaults. It must never contain real private-key passphrases." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Write-V46GradientWrappedText -Text "GnuPG pinentry remains responsible for unlocking private keys only when a cryptographic operation needs them." -Indent "  " -Width 112 -StartRgb $script:GradientSilverStart -EndRgb $script:GradientBlueEnd
-    Wait-User
-}
 
 function Main-Menu {
     while ($true) {
@@ -6801,7 +6136,7 @@ function Main-Menu {
             (New-ConsoleMenuItem -Label "Setup doctor" -Value "Doctor" -Hint "Check config, folders, GnuPG, key inventory, and PQC hints." -Color $script:UiWhiteSilver -Shortcut "d"),
             (New-ConsoleMenuItem -Label "About" -Value "About" -Hint "Open operator notes, logo source order, scoring and security model." -Color $script:UiSilverBlue -Shortcut "9"),
             (New-ConsoleMenuItem -Label "Admin settings" -Value "Admin" -Hint "Safety-confirmed settings, output mode, identity administration and defaults." -Color $script:UiMidBlue -Shortcut "0"),
-            (New-ConsoleMenuItem -Label "Quit" -Value "Quit" -Hint "Close the tool cleanly." -Color $script:UiWhiteSilver -Shortcut "q")
+            (New-ConsoleMenuItem -Label "Quit" -Value "Quit" -Hint "Press Enter to close the tool cleanly." -Color $script:UiWhiteSilver)
         )
         $choice = Invoke-MainMenuRightPanel -HeaderLines $header -Items $items
         switch ($choice) {
@@ -6828,7 +6163,7 @@ function Main-Menu {
 # Compact key selection, live display effects, About page, and the single
 # maintained embedded boot logo. Definitions below are the active overrides.
 # -----------------------------------------------------------------------------
-$script:ToolVersion = "1.0.0-rc1"
+$script:ToolVersion = "1.1.0-rc6"
 $script:LiveNmsMenuEnabled = $true
 $script:V62NmsFrameDelayMs = 52
 $script:LeftLogoUseCompactWhenOversized = $false
@@ -6974,138 +6309,6 @@ function New-MainMenuRightLines {
     return @($lines)
 }
 
-function Invoke-MainMenuRightPanel {
-    param(
-        [Parameter(Mandatory=$true)]$HeaderLines,
-        [Parameter(Mandatory=$true)]$Items,
-        [int]$SelectedIndex = 0
-    )
-    $itemsArray = @($Items)
-    if ($itemsArray.Count -eq 0) { return "Back" }
-    $oldCursorVisible = $null
-    $firstDraw = $true
-    $lastTotalRows = 0
-    try { $oldCursorVisible = [Console]::CursorVisible; [Console]::CursorVisible = $false } catch { }
-    try {
-        while ($true) {
-            try { $script:V62NmsFrame = [int]$script:V62NmsFrame + 1 } catch { $script:V62NmsFrame = 1 }
-            $windowWidth = Get-VisibleWindowWidthV68
-            $windowHeight = Get-VisibleWindowHeightV68
-
-            if ($windowWidth -lt 105) {
-                return (Invoke-ConsoleMenu -Title "Main menu" -HeaderLines $HeaderLines -Items $itemsArray -Layout "Vertical" -SelectedIndex $SelectedIndex)
-            }
-
-            $leftWidth = if ($windowWidth -ge 150) { 64 } elseif ($windowWidth -ge 125) { 58 } else { 54 }
-            $rightX = $leftWidth + 2
-            $rightWidth = [Math]::Max(44, $windowWidth - $rightX - 2)
-            $showAllHints = ($windowHeight -ge 36)
-
-            $modeText = if (Test-ShareableOutput) { "Shareable" } else { "Private" }
-            $gpgState = if (Test-ShareableOutput) { "hidden" } else { "ready" }
-            $left = @(Get-CompactMainLeftLines -ModeText $modeText -GpgState $gpgState)
-            $right = @(New-MainMenuRightLines -Items $itemsArray -SelectedIndex $SelectedIndex -PanelWidth $rightWidth -ShowAllHints:$showAllHints)
-            $footerRow = [Math]::Max($left.Count, $right.Count) + 1
-            $totalRows = $footerRow + 2
-
-            if ($footerRow -gt ($windowHeight - 3)) {
-                $showAllHints = $false
-                $right = @(New-MainMenuRightLines -Items $itemsArray -SelectedIndex $SelectedIndex -PanelWidth $rightWidth -ShowAllHints:$false)
-                $footerRow = [Math]::Max($left.Count, $right.Count) + 1
-                $totalRows = $footerRow + 2
-            }
-
-            if ($firstDraw) { Clear-Host; $firstDraw = $false } else { try { [Console]::SetCursorPosition(0, 0) } catch { Clear-Host } }
-            $emptyLeft = (New-MenuRenderLine -Text "" -Color $script:UiDimSilver)
-            $emptyRight = (New-MenuRenderLine -Text "" -Color $script:UiDimSilver)
-            for ($row = 0; $row -lt $totalRows; $row++) {
-                $lineLeft = if ($row -lt $left.Count) { $left[$row] } else { $emptyLeft }
-                $lineRight = if ($row -lt $right.Count) { $right[$row] } else { $emptyRight }
-                Write-MenuRenderLineAt -Line $lineLeft -X 0 -Y $row -Width $leftWidth
-                Write-MenuRenderLineAt -Line $lineRight -X $rightX -Y $row -Width $rightWidth
-            }
-            if ($lastTotalRows -gt $totalRows) {
-                $blank = (New-MenuRenderLine -Text "" -Color $script:UiDimSilver)
-                for ($row = $totalRows; $row -lt $lastTotalRows; $row++) { Write-MenuRenderLineAt -Line $blank -X 0 -Y $row -Width ([Math]::Max(20, $windowWidth - 1)) }
-            }
-            $lastTotalRows = $totalRows
-            $footerBase = if ($showAllHints) { "Use arrows. ENTER opens. N toggles smooth live NMS. Q exits." } else { "Use arrows. ENTER opens. N toggles NMS. Q exits. Hints compacted." }
-            $footerText = Convert-ToNmsSentenceV62 -Text $footerBase -Seed 777 -Reveal 0.83
-            $footer = (New-MenuRenderLine -Text $footerText -Color $script:UiDimBone)
-            Write-MenuRenderLineAt -Line $footer -X 0 -Y $footerRow -Width ([Math]::Min($windowWidth - 1, 126))
-            try { [Console]::SetCursorPosition(0, $footerRow + 1) } catch { }
-
-            $key = $null
-            try {
-                if ([bool]$script:LiveNmsMenuEnabled) {
-                    $until = (Get-Date).AddMilliseconds([int]$script:V62NmsFrameDelayMs)
-                    while ((Get-Date) -lt $until) {
-                        if ([Console]::KeyAvailable) { $key = [Console]::ReadKey($true); break }
-                        Start-Sleep -Milliseconds 5
-                    }
-                    if ($null -eq $key) { continue }
-                } else { $key = [Console]::ReadKey($true) }
-            } catch { return (Invoke-ConsoleMenu -Title "Main menu" -HeaderLines $HeaderLines -Items $itemsArray -Layout "Vertical" -SelectedIndex $SelectedIndex) }
-            if (Test-BlockedControlQuitKey -KeyInfo $key) { Write-QuitGuardNotice; $firstDraw = $true; continue }
-            switch ($key.Key) {
-                "LeftArrow"  { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta -1; Clear-PendingConsoleKeys }
-                "UpArrow"    { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta -1; Clear-PendingConsoleKeys }
-                "RightArrow" { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta 1; Clear-PendingConsoleKeys }
-                "DownArrow"  { $SelectedIndex = Move-MenuIndex -Current $SelectedIndex -Count $itemsArray.Count -Delta 1; Clear-PendingConsoleKeys }
-                "Enter"      { return [string]$itemsArray[$SelectedIndex].Value }
-                "Escape"     { continue }
-                default {
-                    $ch = [string]$key.KeyChar
-                    if ($ch -eq "q" -or $ch -eq "Q") { return "Quit" }
-                    if ($ch -eq "n" -or $ch -eq "N") { $script:LiveNmsMenuEnabled = -not [bool]$script:LiveNmsMenuEnabled; Save-Config; continue }
-                    if (-not [string]::IsNullOrWhiteSpace($ch)) {
-                        foreach ($item in $itemsArray) {
-                            if ($ch -eq [string]$item.Shortcut) { return [string]$item.Value }
-                            if ($ch.ToLowerInvariant() -eq ([string]$item.Shortcut).ToLowerInvariant()) { return [string]$item.Value }
-                        }
-                    }
-                }
-            }
-        }
-    } finally { try { if ($null -ne $oldCursorVisible) { [Console]::CursorVisible = [bool]$oldCursorVisible } } catch { } }
-}
-
-function Show-StartupBootScreenV51 {
-    Clear-Host
-    Clear-PendingConsoleInputV56
-    $screenWidth = Get-V57WindowWidth
-    $maxWidth = [Math]::Max(70, [Math]::Min(138, $screenWidth - 1))
-    foreach ($line in @(Get-BootLogoLinesV65)) {
-        $safe = Clip-AsciiLineV67 -Text ([string]$line) -Width $maxWidth
-        Write-GradientFixedLineV56 -Text $safe -StartRgb $script:GradientBlueStart -EndRgb $script:GradientBlueEnd -Bold
-        Start-Sleep -Milliseconds 4
-    }
-    Write-Host ""
-    $boxWidth = [Math]::Max(78, [Math]::Min(114, $screenWidth - 4))
-    $rule = "─" * ($boxWidth - 4)
-    Write-Host ("  ┌{0}┐" -f $rule) -ForegroundColor $script:UiBorderBlue
-    Write-BootMenuBoxLineV67 -Label "BOOT MENU" -Value ([string]$script:BootMenuTitle) -Width $boxWidth -Highlight
-    Write-BootMenuBoxLineV67 -Label "Operator" -Value ([string]$script:BootMenuSubtitle) -Width $boxWidth
-    Write-BootMenuBoxLineV67 -Label "Build" -Value ([string]$script:ToolVersion) -Width $boxWidth -Highlight
-    Write-BootMenuBoxLineV67 -Label "Config" -Value (Format-DisplayPath (Get-ConfigPathV63)) -Width $boxWidth
-    Write-BootMenuBoxLineV67 -Label "PGP folder" -Value (Format-DisplayPath $script:DefaultStartFolder) -Width $boxWidth
-    Write-BootMenuBoxLineV67 -Label "Output folder" -Value (Format-DisplayPath (Get-OutputFolderV63)) -Width $boxWidth
-    Write-BootMenuBoxLineV67 -Label "Key profile" -Value ([string]$script:DefaultKeyProfile) -Width $boxWidth -Highlight
-    Write-Host ("  └{0}┘" -f $rule) -ForegroundColor $script:UiBorderBlue
-    Write-Host ""
-
-    $progressRow = 0
-    try { $progressRow = [Console]::CursorTop } catch { $progressRow = 0 }
-    foreach ($p in @(0, 12, 25, 37, 51, 66, 78, 90, 100)) {
-        Clear-PendingConsoleInputV56
-        Write-BootProgressAtV57 -Row $progressRow -Percent $p -Label (Get-BootStageLabelV56 -Percent $p)
-        Start-Sleep -Milliseconds 70
-    }
-    Write-BootProgressAtV57 -Row $progressRow -Percent 100 -Label "ready"
-    try { [Console]::SetCursorPosition(0, $progressRow + 2) } catch { Write-Host "" }
-    Write-GradientFixedLineV56 -Text "  Boot complete. Press ENTER to continue to identity selection." -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
-    if ([bool]$script:BootWaitForEnter) { Wait-ForEnterOnlyV56 } else { Start-Sleep -Milliseconds 450 }
-}
 
 function Write-V71CompactKeyRow {
     param([int]$LocalNumber, [Parameter(Mandatory=$true)]$Key)
@@ -7246,11 +6449,11 @@ function Show-AboutSection {
         "Live NMS is visual theater across the main menu. It does not change encryption, signing, key choice, or GnuPG behavior.",
         "One maintained boot logo is embedded. Optional external artwork is loaded only from paths explicitly set in the configuration file."
     )
-    Write-V46GradientWrappedText -Text "Press ENTER to return." -Indent "  " -Width 112 -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
     Wait-User
 }
 
 function Main-Menu {
+    Initialize-OqgRainV22BeforeMenu
     while ($true) {
         $modeText = if (Test-ShareableOutput) { "Shareable" } else { "Private" }
         $gpgState = if (Test-ShareableOutput) { "hidden" } else { "ready" }
@@ -7267,7 +6470,7 @@ function Main-Menu {
             (New-ConsoleMenuItem -Label "Setup doctor" -Value "Doctor" -Hint "Check config, folders, GnuPG, key inventory, and PQC hints." -Color $script:UiWhiteSilver -Shortcut "d"),
             (New-ConsoleMenuItem -Label "About" -Value "About" -Hint "Project scope, PQC notes, interface behavior, and security model." -Color $script:UiSilverBlue -Shortcut "9"),
             (New-ConsoleMenuItem -Label "Admin settings" -Value "Admin" -Hint "Safety-confirmed settings, output mode, identity administration and defaults." -Color $script:UiMidBlue -Shortcut "0"),
-            (New-ConsoleMenuItem -Label "Quit" -Value "Quit" -Hint "Close the tool cleanly." -Color $script:UiWhiteSilver -Shortcut "q")
+            (New-ConsoleMenuItem -Label "Quit" -Value "Quit" -Hint "Press Enter to close the tool cleanly." -Color $script:UiWhiteSilver)
         )
         $choice = Invoke-MainMenuRightPanel -HeaderLines $header -Items $items
         switch ($choice) {
@@ -7290,9 +6493,2756 @@ function Main-Menu {
 }
 
 
+# OQG-RECOVERY-HOLD-V1
+function Wait-OqgIdentityReview {
+    param([ValidateRange(1,60)][int]$Seconds=10)
+    Write-Host ''
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch {}
+    do {
+        $secondsLeft=[Math]::Ceiling(($deadline-[DateTime]::UtcNow).TotalSeconds)
+        if ($secondsLeft -le 0) { break }
+        Write-Host ("`r  Identity ready. Press ANY KEY to continue. Auto in {0,2}s  " -f $secondsLeft) -NoNewline -ForegroundColor Cyan
+        try {
+            if ([Console]::KeyAvailable) { [void][Console]::ReadKey($true); break }
+        } catch {}
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    Write-Host ''
+}
+
+# OQG-RICH-WIDE-V6
+# Fullscreen menu renderer, animated shell, and shared prompts.
+$script:OqgMenuTitle = ''
+
+function Write-OqgWideLine {
+    param(
+        [string]$Text = '',
+        [int]$X,
+        [int]$Y,
+        [int]$Width,
+        [string]$Color = 'Gray',
+        [string]$BackgroundColor = ''
+    )
+    if ($Width -lt 1) { return }
+    $line = New-MenuRenderLine -Text $Text -Color $Color -BackgroundColor $BackgroundColor
+    Write-MenuRenderLineAt -Line $line -X $X -Y $Y -Width $Width
+}
+
+function Write-OqgRichGradient {
+    param([string]$Text = '', [int]$X, [int]$Y, [int]$Width,
+          [string]$Background = '', [switch]$Bold)
+    $segments = @(New-GradientSegments -Text $Text -StartRgb $script:GradientBlueStart -EndRgb $script:GradientBlueEnd -BackgroundColor $Background -Bold:$Bold)
+    Write-MenuRenderLineAt -Line (New-ConsoleRichLine -Segments $segments) -X $X -Y $Y -Width $Width
+}
+
+
+# v5: visual indicators are illustrative UI only, not measured cryptographic strength.
+function Write-OqgGradientMeter {
+    param([int]$X,[int]$Y,[int]$Width,[string]$Label,[int]$Filled,[int]$Cells=14)
+    $segments = @()
+    $segments += (New-ConsoleSegment -Text ('  ' + $Label.PadRight(11) + ': [') -Color $script:UiSilverBlue)
+    for ($i=0; $i -lt $Cells; $i++) {
+        if ($i -lt $Filled) {
+            $ratio = if ($Cells -le 1) { 0.0 } else { $i / [double]($Cells - 1) }
+            # Indigo -> electric blue -> ice-white, aligned with existing QG palette.
+            if ($ratio -lt 0.5) {
+                $t = $ratio * 2.0
+                $r=[int](34 + 34*$t); $g=[int](83 + 133*$t); $b=[int](186 + 69*$t)
+            } else {
+                $t = ($ratio - 0.5) * 2.0
+                $r=[int](68 + 160*$t); $g=[int](216 + 22*$t); $b=[int](255 - 6*$t)
+            }
+            $segments += (New-ConsoleSegment -Text '█' -Color ('Rgb:{0},{1},{2}' -f $r,$g,$b) -Bold)
+        } else {
+            $segments += (New-ConsoleSegment -Text '░' -Color 'Rgb:35,48,68')
+        }
+    }
+    $segments += (New-ConsoleSegment -Text ']' -Color $script:UiSilverBlue)
+    Write-MenuRenderLineAt -Line (New-ConsoleRichLine -Segments $segments) -X $X -Y $Y -Width $Width
+}
+
+function Write-OqgAnimatedChrome {
+    param([int]$LeftWidth,[int]$ActionX,[int]$ActionWidth,[int]$DashX,[int]$DashWidth,
+          [int]$FooterY,[string]$Selection,[int]$BodyTop,[int]$NmsY,[int]$NmsRows)
+    # Advance the ORIGINAL v71 NMS engine. v4 never advanced the frame here.
+    try { $script:V62NmsFrame = [int]$script:V62NmsFrame + 1 }
+    catch { $script:V62NmsFrame = 1 }
+    Write-OqgRichGradient -Text ('  ' + (Get-OqgSafeNmsText -Text 'OPENPGP QUANTUM GUARD' -Reveal 0.93 -Seed 7)) -X 0 -Y 1 -Width $LeftWidth -Bold
+    $screenTitle = if ([string]::IsNullOrWhiteSpace([string]$script:OqgMenuTitle)) { 'ACTION CENTER / INTERACTIVE CONSOLE' } else { ([string]$script:OqgMenuTitle).ToUpperInvariant() }
+    Write-OqgRichGradient -Text ('  ' + (Get-OqgSafeNmsText -Text $screenTitle -Reveal 0.92 -Seed 13)) -X $ActionX -Y 1 -Width $ActionWidth -Bold
+    Write-OqgRichGradient -Text ('  ' + (Get-OqgSafeNmsText -Text 'DASHBOARD / TELEMETRY / NMS' -Reveal 0.91 -Seed 19)) -X $DashX -Y 1 -Width $DashWidth -Bold
+    Write-OqgRichNmsTicker -X $ActionX -Y $FooterY -Width ($DashX + $DashWidth - $ActionX) -Selection $Selection
+    if ($NmsRows -gt 0) {
+        Write-OqgPanel -X $DashX -Y $NmsY -Width $DashWidth -Lines (Get-OqgNmsPanelLines -Selection $Selection) -MaxRows $NmsRows -BodyColor $script:UiLightBlue
+    }
+}
+
+function Get-OqgSafeNmsText {
+    param([string]$Text,[double]$Reveal=0.90,[int]$Seed=17)
+    if (-not [bool]$script:LiveNmsMenuEnabled) { return $Text }
+    try {
+        return (Convert-ToNmsSentenceV62 -Text $Text -Seed $Seed -Reveal $Reveal)
+    } catch {
+        return $Text
+    }
+}
+
+function Get-OqgBarText {
+    param([int]$Value = 7,[int]$Max = 10,[int]$Width = 14)
+    if ($Max -lt 1) { $Max = 1 }
+    $fill = [int][Math]::Round(($Value / [double]$Max) * $Width)
+    if ($fill -lt 0) { $fill = 0 }
+    if ($fill -gt $Width) { $fill = $Width }
+    return ('[' + ('█' * $fill) + ('░' * ($Width - $fill)) + ']')
+}
+
+function Get-OqgMenuCategory {
+    param([string]$Label)
+    switch -Regex ($Label) {
+        'Encrypt file|Decrypt file' { return 'FILE' }
+        'Encrypt text|Decrypt text' { return 'TEXT' }
+        'Inspect|Choose Different Key|Generate new key|Export keys' { return 'KEY' }
+        'Setup doctor|Admin settings' { return 'ADMIN' }
+        'About' { return 'INFO' }
+        'Quit' { return 'EXIT' }
+        default { return 'TASK' }
+    }
+}
+
+function Get-OqgActionDetailLines {
+    param($Item,[int]$Width)
+    $label = [string]$Item.Label
+    $hint = [string]$Item.Hint
+    $shortcut = [string]$Item.Shortcut
+    $category = Get-OqgMenuCategory -Label $label
+    $fpr = Short-Fpr $script:IdentityFingerprint
+    $mode = if (Test-ShareableOutput) { 'Shareable' } else { 'Private' }
+    $lines = @(
+        '  SELECTED ACTION',
+        '',
+        ('  Name      : ' + $label),
+        ('  Category  : ' + $category),
+        ('  Shortcut  : ' + $(if ([string]::IsNullOrWhiteSpace($shortcut)) { 'none' } else { $shortcut.ToUpperInvariant() })),
+        ('  Output    : ' + $mode),
+        ('  Identity  : ' + $(if ([string]::IsNullOrWhiteSpace($fpr)) { 'not selected' } else { $fpr })),
+        '',
+        '  PURPOSE',
+        ('  ' + $hint),
+        '',
+        '  NEXT STEP',
+        '  Press ENTER to open the selected workflow.'
+    )
+    return $lines
+}
+
+function Get-OqgTelemetryLines {
+    param([int]$WindowWidth,[int]$WindowHeight)
+    # No repeated GnuPG calls during animation. Use Setup Doctor for real key counts.
+    $publicCount = 'See Doctor'; $secretCount = 'See Doctor'
+    $lines = @(
+        '  TELEMETRY',
+        '',
+        ('  Session    : LIVE'),
+        ('  PQC mode   : ' + $(if ([bool]$script:RequirePqcEncryption) { 'REQUIRED' } else { 'OPTIONAL' })),
+        ('  Profile    : ' + [string]$script:DefaultKeyProfile),
+        ('  Backend    : GnuPG'),
+        ('  Public keys: ' + $publicCount),
+        ('  Secret keys: ' + $secretCount),
+        ('  Window     : {0}x{1}' -f $WindowWidth,$WindowHeight),
+        ('  Build      : ' + [string]$script:ToolVersion),
+        '',
+        '  Visual indicators (illustrative)',
+        '  No security score is inferred.'
+    )
+    return $lines
+}
+
+function Switch-OqgMenuNms {
+    $enabled = -not [bool]$script:LiveNmsMenuEnabled
+    $script:LiveNmsMenuEnabled = $enabled
+    $script:EnableNoMoreSecretsEffect = $enabled
+    $script:EnableDynamicNmsMenu = $enabled
+    # A full repaint replaces the text. Resample its foreground before resuming rain.
+    $script:OqgRainV22.Previous = @{}
+    $script:OqgRainV22.ForegroundKey = ''
+    $script:OqgRainV22.MaskKey = ''
+    Save-Config
+}
+
+function Get-OqgNmsPanelLines {
+    param([string]$Selection)
+    $channel = @(
+        '  NMS CHANNEL',
+        '',
+        ('  ' + (Get-OqgSafeNmsText -Text ('ACTIVE  ::  ' + $Selection) -Reveal 0.82 -Seed 11)),
+        ('  ' + (Get-OqgSafeNmsText -Text 'PKT FLOW ::  OPENPGP / ML-KEM / KEYRING' -Reveal 0.77 -Seed 23)),
+        ('  ' + (Get-OqgSafeNmsText -Text 'STATUS   ::  CHANNEL LIVE / OPERATOR READY' -Reveal 0.84 -Seed 31)),
+        ('  ' + (Get-OqgSafeNmsText -Text 'NOTE     ::  MENUS READABLE / SHELL ANIMATED' -Reveal 0.78 -Seed 41)),
+        ('  ' + (Get-OqgSafeNmsText -Text 'VERIFY   ::  RUN SETUP DOCTOR BEFORE LIVE USE' -Reveal 0.86 -Seed 53))
+    )
+    return $channel
+}
+
+function Write-OqgPanel {
+    param([int]$X,[int]$Y,[int]$Width,[string[]]$Lines,[int]$MaxRows,[string]$BodyColor='Gray')
+    if ($MaxRows -lt 1) { return }
+    for ($i = 0; $i -lt $Lines.Count -and $i -lt $MaxRows; $i++) {
+        $line = [string]$Lines[$i]
+        $row = $Y + $i
+        if ($line -match '^  (IDENTITY|CRYPTOGRAPHIC PROFILE|CONSOLE|SELECTED ACTION|PURPOSE|NEXT STEP|TELEMETRY|NMS CHANNEL)$') {
+            Write-OqgRichGradient -Text $line -X $X -Y $row -Width $Width -Bold
+        } else {
+            Write-OqgWideLine -Text $line -X $X -Y $row -Width $Width -Color $BodyColor
+        }
+    }
+}
+
+function Write-OqgRichNmsTicker {
+    param([int]$X,[int]$Y,[int]$Width,[string]$Selection)
+    $msg = if ([bool]$script:LiveNmsMenuEnabled) {
+        Get-OqgSafeNmsText -Text ('NMS :: ACTIVE CHANNEL | ' + $Selection + ' | OPENPGP QUANTUM GUARD') -Reveal 0.88 -Seed 61
+    } else {
+        'NMS :: OFF  |  PRESS N TO ENABLE'
+    }
+    Write-OqgWideLine -Text ('  ' + $msg) -X $X -Y $Y -Width $Width -Color $script:UiLightBlue
+}
+
+function Wait-User {
+    param([string]$Prompt = 'Press ENTER to continue')
+    $oldCursorVisible = $null
+    $firstPaint = $true
+    $lastSize = ''
+    try { $oldCursorVisible = [Console]::CursorVisible; [Console]::CursorVisible = $false } catch { }
+    try {
+        while ($true) {
+            $windowWidth = 80; $windowHeight = 25
+            try { $windowWidth = [Console]::WindowWidth; $windowHeight = [Console]::WindowHeight } catch { }
+            $usableWidth = [Math]::Max(20, $windowWidth - 1)
+            $y = [Math]::Max(0, $windowHeight - 3)
+            $rule = '─' * [Math]::Max(1,$usableWidth - 2)
+            Write-OqgWideLine -Text ('├' + $rule + '┤') -X 0 -Y $y -Width $usableWidth -Color $script:UiBorderBlue
+            Write-OqgWideLine -Text ('  ' + $Prompt) -X 0 -Y ($y + 1) -Width $usableWidth -Color $script:UiWhiteSilver
+            Write-OqgRichNmsTicker -X 0 -Y ($y + 2) -Width $usableWidth -Selection 'RETURN'
+            try { [Console]::SetCursorPosition(0, [Math]::Min($windowHeight - 1, $y + 2)) } catch { }
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq 'Enter' -or $key.Key -eq 'Escape' -or $key.Key -eq 'Spacebar') { return }
+        }
+    } finally {
+        try { if ($null -ne $oldCursorVisible) { [Console]::CursorVisible = [bool]$oldCursorVisible } } catch { }
+    }
+}
+
+function Invoke-MainMenuRightPanel {
+    param(
+        [Parameter(Mandatory=$true)]$HeaderLines,
+        [Parameter(Mandatory=$true)]$Items,
+        [int]$SelectedIndex = 0
+    )
+    $itemsArray = @($Items)
+    if ($itemsArray.Count -eq 0) { return 'Back' }
+    if ($SelectedIndex -lt 0 -or $SelectedIndex -ge $itemsArray.Count) { $SelectedIndex = 0 }
+    # OQG-FIRSTPAINT-HOTFIX-V6
+    # These are local to the main menu, not Wait-User.
+    $firstPaint = $true
+    $lastSize = ''
+    $oqgPreviousIndex = -1
+    $oqgPreviousPage = -1
+    $oldCursorVisible = $null
+    try { $oldCursorVisible = [Console]::CursorVisible; [Console]::CursorVisible = $false } catch { }
+    try {
+        while ($true) {
+            $windowWidth = 80
+            $windowHeight = 25
+            try {
+                $windowWidth = [Console]::WindowWidth
+                $windowHeight = [Console]::WindowHeight
+            } catch { }
+
+            if ($windowWidth -lt 120 -or $windowHeight -lt 28) {
+                return (Invoke-OqgLegacyConsoleMenu -Title 'Main menu' -HeaderLines $HeaderLines -Items $itemsArray -Layout 'Vertical' -SelectedIndex $SelectedIndex)
+            }
+
+            $usableWidth = $windowWidth - 1
+            # OQG-DUAL-ANSI-V9: preserve full left logo proportions without stealing navigation width.
+            $leftArtWidth = Get-OqgAnsiWidth -FileName 'openpgp_quantum_guard_left_logo.ansi.txt'
+            $requestedLeft = if ($leftArtWidth -gt 0 -and $windowWidth -ge 165) { [Math]::Min(84, $leftArtWidth + 4) } else { 48 }
+            $leftWidth = [int][Math]::Max(38, [Math]::Min($requestedLeft, [Math]::Floor($usableWidth * 0.38)))
+            $dashWidth = [int][Math]::Max(38, [Math]::Min(48, [Math]::Floor($usableWidth * 0.28)))
+            $gap = 2
+            $actionX = $leftWidth + $gap
+            $dashX = $usableWidth - $dashWidth
+            $actionWidth = $dashX - $actionX - 1
+            if ($actionWidth -lt 40) {
+                $dashWidth = 36
+                $dashX = $usableWidth - $dashWidth
+                $actionWidth = $dashX - $actionX - 1
+            }
+
+            $headerY = 0
+            $bodyTop = 3
+            $footerTop = $windowHeight - 4
+            $bodyHeight = $footerTop - $bodyTop - 1
+            $ruleLeft = '─' * [Math]::Max(1, $leftWidth - 2)
+            $ruleAction = '─' * [Math]::Max(1, $actionWidth - 2)
+            $ruleDash = '─' * [Math]::Max(1, $dashWidth - 2)
+
+            $step = 3
+            $pageSize = [Math]::Max(1, [int][Math]::Floor(($bodyHeight - 4) / $step))
+            $page = [int][Math]::Floor($SelectedIndex / $pageSize)
+            $pages = [int][Math]::Ceiling($itemsArray.Count / [double]$pageSize)
+            $pageStart = $page * $pageSize
+            $pageEnd = [Math]::Min($itemsArray.Count, $pageStart + $pageSize)
+
+            # Do not Clear-Host on every arrow/ESC. Paint only on first entry or resize.
+            $sizeKey = '{0}x{1}' -f $windowWidth,$windowHeight
+            $oqgNavOnly = (-not $firstPaint -and $lastSize -eq $sizeKey -and $oqgPreviousIndex -ge 0 -and $oqgPreviousPage -eq $page)
+            if ($firstPaint -or $lastSize -ne $sizeKey) {
+                Clear-Host
+                $firstPaint = $false
+                $lastSize = $sizeKey
+            }
+            if (-not $oqgNavOnly) {
+            # Top chrome
+            Write-OqgWideLine -Text ('┌' + $ruleLeft + '┐') -X 0 -Y 0 -Width $leftWidth -Color $script:UiBorderBlue
+            Write-OqgWideLine -Text ('┌' + $ruleAction + '┐') -X $actionX -Y 0 -Width $actionWidth -Color $script:UiBorderBlue
+            Write-OqgWideLine -Text ('┌' + $ruleDash + '┐') -X $dashX -Y 0 -Width $dashWidth -Color $script:UiBorderBlue
+            Write-OqgRichGradient -Text ('  ' + (Get-OqgSafeNmsText -Text 'OPENPGP QUANTUM GUARD' -Reveal 0.96 -Seed 7)) -X 0 -Y 1 -Width $leftWidth -Bold
+            Write-OqgRichGradient -Text ('  ' + (Get-OqgSafeNmsText -Text $(if ([string]::IsNullOrWhiteSpace([string]$script:OqgMenuTitle)) { 'ACTION CENTER / INTERACTIVE CONSOLE' } else { [string]$script:OqgMenuTitle }) -Reveal 0.96 -Seed 13)) -X $actionX -Y 1 -Width $actionWidth -Bold
+            Write-OqgRichGradient -Text ('  ' + (Get-OqgSafeNmsText -Text 'DASHBOARD / TELEMETRY / NMS' -Reveal 0.96 -Seed 19)) -X $dashX -Y 1 -Width $dashWidth -Bold
+            Write-OqgWideLine -Text ('├' + $ruleLeft + '┤') -X 0 -Y 2 -Width $leftWidth -Color $script:UiBorderBlue
+            Write-OqgWideLine -Text ('├' + $ruleAction + '┤') -X $actionX -Y 2 -Width $actionWidth -Color $script:UiBorderBlue
+            Write-OqgWideLine -Text ('├' + $ruleDash + '┤') -X $dashX -Y 2 -Width $dashWidth -Color $script:UiBorderBlue
+
+            # Left logo: native SGR art, with safe compact fallback.
+            $leftArt = @(Get-OqgAnsiRows -FileName 'openpgp_quantum_guard_left_logo.ansi.txt')
+            $canShowLeftArt = ($leftArt.Count -ge 3 -and $leftArtWidth -le ($leftWidth - 4) -and $bodyHeight -ge ($leftArt.Count + 12))
+            $logoCount = 0
+            if ($canShowLeftArt) {
+                $logoCount = $leftArt.Count
+                for ($k = 0; $k -lt $logoCount; $k++) {
+                    Write-OqgAnsiAt -Text ([string]$leftArt[$k]) -X 2 -Y ($bodyTop + $k) -MaxWidth ($leftWidth - 4)
+                }
+            } else {
+                $logo = @(New-LeftMenuLogoRenderLinesV65 -Width ($leftWidth - 2))
+                $maxLogo = if ($windowHeight -ge 40) { 10 } else { 6 }
+                $logoCount = [Math]::Min($logo.Count, $maxLogo)
+                for ($k = 0; $k -lt $logoCount; $k++) {
+                    Write-MenuRenderLineAt -Line $logo[$k] -X 1 -Y ($bodyTop + $k) -Width ($leftWidth - 2)
+                }
+            }
+            $fpr = Short-Fpr $script:IdentityFingerprint
+            $modeLabel = if (Test-ShareableOutput) { 'Shareable' } else { 'Private' }
+            $pqcLabel = if ([bool]$script:RequirePqcEncryption) { 'REQUIRED' } else { 'OPTIONAL' }
+            $leftRows = @(
+                '  IDENTITY / SESSION','',
+                ('  Active key  : ' + $(if ([string]::IsNullOrWhiteSpace($fpr)) { 'NOT SELECTED' } else { $fpr })),
+                ('  Output mode : ' + $modeLabel),
+                ('  PQC policy  : ' + $pqcLabel),
+                '',
+                '  CRYPTOGRAPHIC PROFILE','',
+                ('  Profile : ' + [string]$script:DefaultKeyProfile),
+                '  Backend : GnuPG',
+                '  Visual UI meters (illustrative)',
+                '',,
+                '',
+                '  CONSOLE','',
+                ('  TUI build : ' + [string]$script:ToolVersion),
+                '  Controls  : Arrows / Enter',
+                '  Shortcuts : Listed at center',
+                '',
+                $(if ($script:LiveNmsMenuEnabled) { '  Global NMS shell is live' } else { '  Global NMS shell is off' }),
+                '  while selected actions remain',
+                '  fully readable.'
+            )
+            Write-OqgPanel -X 0 -Y ($bodyTop + $logoCount + 1) -Width $leftWidth -Lines $leftRows -MaxRows ($bodyHeight - $logoCount - 1) -BodyColor $script:UiSilverBlue
+            # Meters are UI decoration, not measured cryptographic readiness.
+            $meterY = [Math]::Min($footerTop - 7, $bodyTop + $logoCount + $leftRows.Count + 2)
+            if ($meterY -gt ($bodyTop + $logoCount + 5)) {
+                Write-OqgGradientMeter -X 0 -Y $meterY -Width $leftWidth -Label 'Readiness*' -Filled 11
+                Write-OqgGradientMeter -X 0 -Y ($meterY + 1) -Width $leftWidth -Label 'Signal*' -Filled 9
+                Write-OqgWideLine -Text '  * Visual activity only' -X 0 -Y ($meterY + 2) -Width $leftWidth -Color $script:UiDimSilver
+            }
+
+            # Center actions
+            $summaryTitle = $(if ($pages -gt 1) { '  {0} actions  /  page {1} of {2}' -f $itemsArray.Count, ($page + 1), $pages } else { '  {0} actions' -f $itemsArray.Count })
+            Write-OqgRichGradient -Text (Get-OqgSafeNmsText -Text $summaryTitle -Reveal 0.95 -Seed 29) -X $actionX -Y $bodyTop -Width $actionWidth -Bold
+            Write-OqgWideLine -Text ('  ·───·───· ' + ('─' * [Math]::Max(1, $actionWidth - 15))) -X $actionX -Y ($bodyTop + 1) -Width $actionWidth -Color $script:UiBorderBlue
+            for ($i = $pageStart; $i -lt $pageEnd; $i++) {
+                $item = $itemsArray[$i]
+                $local = $i - $pageStart
+                $y = $bodyTop + 2 + ($local * $step)
+                if (($y + 1) -ge $footerTop) { break }
+                $selected = ($i -eq $SelectedIndex)
+                $prefix = if ($selected) { '  ▶ ' } else { '    ' }
+                $hotkey = [string]$item.Shortcut
+                $label = [string]$item.Label
+                $hint = [string]$item.Hint
+                $category = Get-OqgMenuCategory -Label $label
+                $line = ('{0}· {1,-7} · {2}' -f $prefix, ('[' + $category + ']'), $label)
+                if (-not [string]::IsNullOrWhiteSpace($hotkey)) { $line += ('  [{0}]' -f $hotkey.ToUpperInvariant()) }
+                $foreground = if ($selected) { $script:UiWhiteSilver } else { $script:UiSilverBlue }
+                $background = if ($selected) { $script:UiHighlightBlue } else { '' }
+                if ($selected) {
+                    Write-OqgWideLine -Text '' -X $actionX -Y $y -Width $actionWidth -Color $script:UiWhiteSilver -BackgroundColor $background
+                    Write-OqgBloomSelectionV19 -Text $line -X $actionX -Y $y -Width $actionWidth -Background $background
+                } else {
+                    Write-OqgWideLine -Text $line -X $actionX -Y $y -Width $actionWidth -Color $foreground
+                }
+                Write-OqgWideLine -Text ('       ' + $hint) -X $actionX -Y ($y + 1) -Width $actionWidth -Color $(if ($selected) { $script:UiLightBlue } else { $script:UiDimSilver }) -BackgroundColor $background
+            }
+
+            # Right dashboard
+            $selectedItem = $itemsArray[$SelectedIndex]
+            $detailLines = Get-OqgActionDetailLines -Item $selectedItem -Width $dashWidth
+            $telemetryLines = Get-OqgTelemetryLines -WindowWidth $windowWidth -WindowHeight $windowHeight
+            $nmsLines = Get-OqgNmsPanelLines -Selection ([string]$selectedItem.Label)
+            $dashSection1 = [Math]::Min([Math]::Max(11,[int]($bodyHeight * 0.34)), $bodyHeight - 10)
+            $dashSection2 = [Math]::Min([Math]::Max(10,[int]($bodyHeight * 0.30)), $bodyHeight - $dashSection1 - 6)
+            $dashSection3 = [Math]::Max(5, $bodyHeight - $dashSection1 - $dashSection2)
+            Write-OqgPanel -X $dashX -Y $bodyTop -Width $dashWidth -Lines $detailLines -MaxRows $dashSection1 -BodyColor $script:UiWhiteSilver
+            Write-OqgWideLine -Text ('  ' + ('─' * [Math]::Max(1, $dashWidth - 5))) -X $dashX -Y ($bodyTop + $dashSection1) -Width $dashWidth -Color $script:UiBorderBlue
+            Write-OqgPanel -X $dashX -Y ($bodyTop + $dashSection1 + 1) -Width $dashWidth -Lines $telemetryLines -MaxRows $dashSection2 -BodyColor $script:UiSilverBlue
+            $telemetryMeterY = $bodyTop + $dashSection1 + $dashSection2 - 3
+            if ($telemetryMeterY -gt ($bodyTop + $dashSection1 + 5)) {
+                Write-OqgGradientMeter -X $dashX -Y $telemetryMeterY -Width $dashWidth -Label 'Readiness*' -Filled 11
+                Write-OqgGradientMeter -X $dashX -Y ($telemetryMeterY + 1) -Width $dashWidth -Label 'Signal*' -Filled 9
+            }
+            Write-OqgWideLine -Text ('  ' + ('─' * [Math]::Max(1, $dashWidth - 5))) -X $dashX -Y ($bodyTop + $dashSection1 + $dashSection2 + 1) -Width $dashWidth -Color $script:UiBorderBlue
+            Write-OqgPanel -X $dashX -Y ($bodyTop + $dashSection1 + $dashSection2 + 2) -Width $dashWidth -Lines $nmsLines -MaxRows ($dashSection3 - 1) -BodyColor $script:UiLightBlue
+
+            # Footer chrome
+            Write-OqgWideLine -Text ('├' + $ruleLeft + '┤') -X 0 -Y $footerTop -Width $leftWidth -Color $script:UiBorderBlue
+            Write-OqgWideLine -Text ('├' + $ruleAction + '┤') -X $actionX -Y $footerTop -Width $actionWidth -Color $script:UiBorderBlue
+            Write-OqgWideLine -Text ('├' + $ruleDash + '┤') -X $dashX -Y $footerTop -Width $dashWidth -Color $script:UiBorderBlue
+            Write-OqgWideLine -Text '  ESC Stay  |  N Live NMS' -X 0 -Y ($footerTop + 1) -Width $leftWidth -Color $script:UiDimSilver
+            Write-OqgWideLine -Text '  ↑ ↓ Navigate   PgUp/PgDn Page   ENTER Open   N Toggle NMS   B Toggle Rain' -X $actionX -Y ($footerTop + 1) -Width $actionWidth -Color $script:UiSilverBlue
+            Write-OqgWideLine -Text ('  Active :: ' + (Get-OqgMenuCategory -Label ([string]$selectedItem.Label))) -X $dashX -Y ($footerTop + 1) -Width $dashWidth -Color $script:UiSilverBlue
+            Write-OqgRichGradient -Text ('  CURRENT  ' + [string]$selectedItem.Label) -X 0 -Y ($footerTop + 2) -Width $leftWidth -Bold
+            Write-OqgRichNmsTicker -X $actionX -Y ($footerTop + 2) -Width ($dashX + $dashWidth - $actionX) -Selection ([string]$selectedItem.Label)
+            Write-OqgWideLine -Text ('└' + $ruleLeft + '┘') -X 0 -Y ($windowHeight - 1) -Width $leftWidth -Color $script:UiBorderBlue
+            Write-OqgWideLine -Text ('└' + $ruleAction + '┘') -X $actionX -Y ($windowHeight - 1) -Width $actionWidth -Color $script:UiBorderBlue
+            Write-OqgWideLine -Text ('└' + $ruleDash + '┘') -X $dashX -Y ($windowHeight - 1) -Width $dashWidth -Color $script:UiBorderBlue
+            try { [Console]::SetCursorPosition(0, $windowHeight - 1) } catch { }
+
+            $script:OqgRainMenuRepaintV24 = $false
+            } else {
+                # V28: Navigation is a two-row update, not a full redraw.
+                # Keep the rain state and all nonchanging dashboard/UI cells intact.
+                foreach ($index in @($oqgPreviousIndex, $SelectedIndex)) {
+                    if ($index -lt $pageStart -or $index -ge $pageEnd) { continue }
+                    $obj = $itemsArray[$index]
+                    $y = $bodyTop + 2 + (($index - $pageStart) * $step)
+                    if (($y + 1) -ge $footerTop) { continue }
+                    $isSelected = ($index -eq $SelectedIndex)
+                    $prefix = if ($isSelected) { '  ▶ ' } else { '    ' }
+                    $label = [string]$obj.Label
+                    $hint = [string]$obj.Hint
+                    $category = Get-OqgMenuCategory -Label $label
+                    $line = ('{0}· {1,-7} · {2}' -f $prefix, ('[' + $category + ']'), $label)
+                    $hotkey = [string]$obj.Shortcut
+                    if (-not [string]::IsNullOrWhiteSpace($hotkey)) { $line += ('  [{0}]' -f $hotkey.ToUpperInvariant()) }
+                    if ($isSelected) {
+                        Write-OqgWideLine -Text '' -X $actionX -Y $y -Width $actionWidth -Color $script:UiWhiteSilver -BackgroundColor $script:UiHighlightBlue
+                        Write-OqgBloomSelectionV19 -Text $line -X $actionX -Y $y -Width $actionWidth -Background $script:UiHighlightBlue
+                    } else {
+                        Write-OqgWideLine -Text $line -X $actionX -Y $y -Width $actionWidth -Color $script:UiSilverBlue
+                    }
+                    Write-OqgWideLine -Text ('       ' + $hint) -X $actionX -Y ($y + 1) -Width $actionWidth -Color $(if ($isSelected) { $script:UiLightBlue } else { $script:UiDimSilver }) -BackgroundColor $(if ($isSelected) { $script:UiHighlightBlue } else { '' })
+                }
+                $selectedItem = $itemsArray[$SelectedIndex]
+                $detailLines = Get-OqgActionDetailLines -Item $selectedItem -Width $dashWidth
+                $nmsLines = Get-OqgNmsPanelLines -Selection ([string]$selectedItem.Label)
+                Write-OqgPanel -X $dashX -Y $bodyTop -Width $dashWidth -Lines $detailLines -MaxRows $dashSection1 -BodyColor $script:UiWhiteSilver
+                Write-OqgPanel -X $dashX -Y ($bodyTop + $dashSection1 + $dashSection2 + 2) -Width $dashWidth -Lines $nmsLines -MaxRows ($dashSection3 - 1) -BodyColor $script:UiLightBlue
+                Write-OqgWideLine -Text ('  Active :: ' + (Get-OqgMenuCategory -Label ([string]$selectedItem.Label))) -X $dashX -Y ($footerTop + 1) -Width $dashWidth -Color $script:UiSilverBlue
+                Write-OqgRichGradient -Text ('  CURRENT  ' + [string]$selectedItem.Label) -X 0 -Y ($footerTop + 2) -Width $leftWidth -Bold
+                # Only the small areas overwritten by navigation need a rain refresh.
+                # Mark their previous background cells as stale, preserving all
+                # other rain glyphs and their unchanged falling-stream state.
+                try {
+                    $rainPrevious = $script:OqgRainV22.Previous
+                    if ($null -ne $rainPrevious) {
+                        foreach ($rainKey in @($rainPrevious.Keys)) {
+                            $cell = $rainPrevious[$rainKey]
+                            $rx = [int]$cell[0]; $ry = [int]$cell[1]
+                            $prevY = $bodyTop + 2 + (($oqgPreviousIndex - $pageStart) * $step)
+                            $newY = $bodyTop + 2 + (($SelectedIndex - $pageStart) * $step)
+                            if ((($ry -ge $prevY -and $ry -le ($prevY+1)) -or
+                                 ($ry -ge $newY -and $ry -le ($newY+1))) -and
+                                $rx -ge $actionX -and $rx -lt ($actionX+$actionWidth)) {
+                                [void]$rainPrevious.Remove($rainKey)
+                            } elseif ($rx -ge $dashX -and $rx -lt ($dashX+$dashWidth) -and
+                                      (($ry -ge $bodyTop -and $ry -lt ($bodyTop+$dashSection1)) -or
+                                       ($ry -ge ($bodyTop+$dashSection1+$dashSection2+2) -and $ry -lt ($bodyTop+$dashSection1+$dashSection2+2+$dashSection3)))) {
+                                [void]$rainPrevious.Remove($rainKey)
+                            }
+                        }
+                    }
+                } catch { }
+            }
+            $script:OqgRainMenuRepaintV24 = $false
+            $key = $null
+            try {
+                while ($null -eq $key) {
+                    # OQG-RAIN-AMBIENT-V12: global continuous state, RGB gradient and protected UI areas.
+# The same falling streams cross panel boundaries, but UI text is never overwritten.
+$actionLastY = $bodyTop + 2 + (($pageEnd - $pageStart - 1) * $step) + 1
+$selectedMenuY = $bodyTop + 2 + (($SelectedIndex - $pageStart) * $step)
+$leftSafeBottom = [Math]::Max(($bodyTop + $logoCount + $leftRows.Count + 2),($meterY + 4))
+$longestAction = 30
+foreach ($rainItem in $itemsArray) {
+    $candidateLength = [Math]::Max(([string]$rainItem.Hint).Length + 11,([string]$rainItem.Label).Length + 24)
+    if ($candidateLength -gt $longestAction) { $longestAction = $candidateLength }
+}
+Invoke-OqgAmbientRainV22 -LeftWidth $leftWidth -LeftContentBottom $leftSafeBottom -LogoBottom ($bodyTop + $logoCount + 1) -ActionX $actionX -ActionWidth $actionWidth -ActionEnd $actionLastY -ActionTextWidth $longestAction -SelectedRow $selectedMenuY -DashX $dashX -DashWidth $dashWidth -DashDetailEnd ($bodyTop + $dashSection1) -DashTelemetryStart ($bodyTop + $dashSection1 + 1) -DashTelemetryEnd ($bodyTop + $dashSection1 + $dashSection2 + 1) -DashNmsStart ($bodyTop + $dashSection1 + $dashSection2 + 2) -DashNmsEnd ($bodyTop + $dashSection1 + $dashSection2 + 2 + $nmsLines.Count) -BodyTop $bodyTop -FooterTop $footerTop -PageStart $pageStart -PageEnd $pageEnd -RowStep $step -LeftMeterY $meterY -DashMeterY $telemetryMeterY
+                    # v35: one coherent NMS pass AFTER ambient rain, every ~120 ms.
+                    # Ink-only glyph runs keep rain visible between the letters.
+                    if ([bool]$script:LiveNmsMenuEnabled -and (($script:V34MenuTick % 3) -eq 0)) {
+                        Write-OqgAnimatedChrome -LeftWidth $leftWidth -ActionX $actionX -ActionWidth $actionWidth -DashX $dashX -DashWidth $dashWidth -FooterY ($footerTop + 2) -Selection ([string]$selectedItem.Label) -BodyTop $bodyTop -NmsY ($bodyTop + $dashSection1 + $dashSection2 + 2) -NmsRows ($dashSection3 - 1)
+                        Write-OqgV35MenuForeground -LeftWidth $leftWidth -LeftTop ($bodyTop + $logoCount + 1) -LeftRows $leftRows -ActionX $actionX -ActionWidth $actionWidth -BodyTop $bodyTop -PageStart $pageStart -PageEnd $pageEnd -SelectedIndex $SelectedIndex -Step $step -Items $itemsArray -DashX $dashX -DashWidth $dashWidth -DashDetailY $bodyTop -DetailLines $detailLines -DashTelemetryY ($bodyTop + $dashSection1 + 1) -TelemetryLines $telemetryLines -DashNmsY ($bodyTop + $dashSection1 + $dashSection2 + 2) -NmsLines $nmsLines -FooterTop $footerTop
+                    }
+                    # NMS shares the existing single menu animation path.
+                    # It never runs on the identity countdown or a second
+                    # competing chrome renderer.
+                    $script:V34MenuTick = [int]$script:V34MenuTick + 1
+                    $deadline = [DateTime]::UtcNow.AddMilliseconds($(if ([bool]$script:OqgCodeRainEnabled) { 40 } elseif ([bool]$script:LiveNmsMenuEnabled) { 95 } else { 500 }))
+                    while ([DateTime]::UtcNow -lt $deadline) {
+                        if ([Console]::KeyAvailable) { $key = [Console]::ReadKey($true); break }
+                        Start-Sleep -Milliseconds 12
+                    }
+                }
+            } catch {
+                return (Invoke-OqgLegacyConsoleMenu -Title 'Main menu' -HeaderLines $HeaderLines -Items $itemsArray -Layout 'Vertical' -SelectedIndex $SelectedIndex)
+            }
+            if (Test-BlockedControlQuitKey -KeyInfo $key) { continue }
+            $oqgPreviousIndex = $SelectedIndex
+            $oqgPreviousPage = $page
+            switch ($key.Key) {
+                'UpArrow'    { $SelectedIndex = ($SelectedIndex - 1 + $itemsArray.Count) % $itemsArray.Count }
+                'LeftArrow'  { $SelectedIndex = ($SelectedIndex - 1 + $itemsArray.Count) % $itemsArray.Count }
+                'DownArrow'  { $SelectedIndex = ($SelectedIndex + 1) % $itemsArray.Count }
+                'RightArrow' { $SelectedIndex = ($SelectedIndex + 1) % $itemsArray.Count }
+                'PageUp'     { $SelectedIndex = [Math]::Max(0, $SelectedIndex - $pageSize) }
+                'PageDown'   { $SelectedIndex = [Math]::Min($itemsArray.Count - 1, $SelectedIndex + $pageSize) }
+                'Home'       { $SelectedIndex = 0 }
+                'End'        { $SelectedIndex = $itemsArray.Count - 1 }
+                'Enter'      { return [string]$itemsArray[$SelectedIndex].Value }
+                'Escape'     { if (-not [string]::IsNullOrWhiteSpace([string]$script:OqgMenuTitle)) { return 'Back' }; continue }
+                default {
+                    $ch = [string]$key.KeyChar
+                    if ($ch -eq 'q' -and -not [string]::IsNullOrWhiteSpace([string]$script:OqgMenuTitle)) { return 'Back' }
+                    if ($ch -eq 'b' -or $ch -eq 'B') {
+    $script:OqgCodeRainEnabled = -not [bool]$script:OqgCodeRainEnabled
+    if (-not $script:OqgCodeRainEnabled) { Clear-OqgAmbientRainV22 }
+    continue
+}
+                    if ($ch -eq 'n') {
+                        Switch-OqgMenuNms
+                        $firstPaint = $true
+                        continue
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($ch)) {
+                        foreach ($item in $itemsArray) {
+                            if ($ch.ToLowerInvariant() -eq ([string]$item.Shortcut).ToLowerInvariant()) {
+                                return [string]$item.Value
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } finally {
+        try { if ($null -ne $oldCursorVisible) { [Console]::CursorVisible = [bool]$oldCursorVisible } } catch { }
+    }
+}
+
+
+# v5: fullscreen shell for ordinary TUI menus, preserving their return-value contract.
+function Invoke-ConsoleMenu {
+    param(
+        [Parameter(Mandatory=$true)][string]$Title,
+        [Parameter(Mandatory=$true)]$Items,
+        $HeaderLines = @(),
+        [string]$Footer = 'Use arrows. ENTER opens. ESC returns.',
+        [ValidateSet('Vertical','Horizontal')][string]$Layout = 'Vertical',
+        [int]$SelectedIndex = 0
+    )
+    $width=80; $height=25
+    try { $width=[Console]::WindowWidth; $height=[Console]::WindowHeight } catch { }
+    if ($width -lt 120 -or $height -lt 28) {
+        return (Invoke-OqgLegacyConsoleMenu -Title $Title -Items $Items -HeaderLines $HeaderLines -Footer $Footer -Layout $Layout -SelectedIndex $SelectedIndex)
+    }
+    $old = $script:OqgMenuTitle
+    try {
+        $script:OqgMenuTitle = $Title
+        return (Invoke-MainMenuRightPanel -HeaderLines $HeaderLines -Items $Items -SelectedIndex $SelectedIndex)
+    } finally { $script:OqgMenuTitle = $old }
+}
+
+
+# Dedicated exit page: never write farewell in the previously drawn menu.
+function Show-Goodbye {
+    $w = 80; $h = 25
+    try { $w=[Console]::WindowWidth; $h=[Console]::WindowHeight } catch { }
+    $w = [Math]::Max(60,$w); $h = [Math]::Max(18,$h)
+    Clear-Host
+    $boxWidth = [Math]::Min(82,[Math]::Max(52,$w-12))
+    $boxX = [int][Math]::Max(0,[Math]::Floor(($w-$boxWidth)/2))
+    $top = [int][Math]::Max(2,[Math]::Floor($h/2)-6)
+    $rule = '─' * [Math]::Max(1,$boxWidth-2)
+    Write-OqgWideLine -Text ('╭' + $rule + '╮') -X $boxX -Y $top -Width $boxWidth -Color $script:UiBorderBlue
+    Write-OqgRichGradient -Text '   OPENPGP QUANTUM GUARD  /  SESSION CLOSED' -X $boxX -Y ($top+2) -Width $boxWidth -Bold
+    Write-OqgWideLine -Text ('  ' + ('·──·──·' * 5)) -X $boxX -Y ($top+4) -Width $boxWidth -Color $script:UiBorderBlue
+    Write-OqgWideLine -Text '   Cryptographic operations have returned control to the operator.' -X $boxX -Y ($top+6) -Width $boxWidth -Color $script:UiSilverBlue
+    Write-OqgWideLine -Text '   Keys remain managed by GnuPG. No secret material is displayed.' -X $boxX -Y ($top+7) -Width $boxWidth -Color $script:UiSilverBlue
+    Write-OqgRichGradient -Text '   Press ENTER to close this session.' -X $boxX -Y ($top+9) -Width $boxWidth -Bold
+    Write-OqgWideLine -Text ('╰' + $rule + '╯') -X $boxX -Y ($top+11) -Width $boxWidth -Color $script:UiBorderBlue
+    Invoke-OqgTransitionRainV23 -Mode Exit -WaitForEnter
+    Clear-Host
+}
+
+function Get-OqgSafeMainLogo {
+    $file=Join-Path $PSScriptRoot 'openpgp_quantum_guard_main_logo.ansi.txt'
+    if(-not (Test-Path -LiteralPath $file -PathType Leaf)){return @()}
+    try{
+        $content=[IO.File]::ReadAllText($file,(New-Object System.Text.UTF8Encoding($false,$true)))
+        $rows=@($content -split "`r?`n" | Where-Object {-not [string]::IsNullOrWhiteSpace($_)})
+        if($rows.Count -lt 3 -or $rows.Count -gt 35){return @()}
+        $esc=[string][char]27
+        foreach($row in $rows){
+            $visible=[regex]::Replace([string]$row,[regex]::Escape($esc)+'\[[0-9;]*m','')
+            if($visible -match '[\x00-\x1f\x7f]' -or $visible.Length -gt 300){return @()}
+        }
+        return $rows
+    }catch{return @()}
+}
+# OQG-DUAL-ANSI-V9: controlled SGR asset reader, never executes asset text.
+function Get-OqgAnsiRows {
+    param([Parameter(Mandatory=$true)][string]$FileName)
+    $path=Join-Path $PSScriptRoot $FileName
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return @() }
+    try {
+        $raw=[IO.File]::ReadAllText($path,(New-Object System.Text.UTF8Encoding($false,$true)))
+        $rows=@($raw -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        if ($rows.Count -lt 3 -or $rows.Count -gt 35) { return @() }
+        foreach ($row in $rows) {
+            $plain=[regex]::Replace([string]$row,[regex]::Escape([string][char]27)+'\[[0-9;]*m','')
+            if ($plain -match '[\x00-\x1f\x7f]' -or $plain.Length -gt 300) { return @() }
+        }
+        return $rows
+    } catch { return @() }
+}
+function Get-OqgAnsiWidth {
+    param([Parameter(Mandatory=$true)][string]$FileName)
+    $width=0
+    foreach ($row in @(Get-OqgAnsiRows -FileName $FileName)) {
+        $w=([regex]::Replace([string]$row,[regex]::Escape([string][char]27)+'\[[0-9;]*m','')).Length
+        if ($w -gt $width) { $width=$w }
+    }
+    return $width
+}
+function Write-OqgAnsiAt {
+    param([string]$Text,[int]$X,[int]$Y,[int]$MaxWidth)
+    $visible=([regex]::Replace($Text,[regex]::Escape([string][char]27)+'\[[0-9;]*m','')).Length
+    if ($visible -gt $MaxWidth) { return }
+    try {
+        [Console]::SetCursorPosition($X,$Y)
+        [Console]::Write($Text+[string][char]27+'[0m')
+    } catch { }
+}
+# OQG-CODE-RAIN-V10
+# Terminal adaptation of PassGenObfuscator2(2).html matrixRain/codeRain canvases.
+# Decorative only. Does not read or record keyboard input, paths, plaintext, or cryptographic material.
+$script:OqgCodeRainEnabled = $true
+$script:OqgCodeRainTick = 0
+$script:OqgCodeRainHeads = @()
+$script:OqgCodeRainLastGeometry = ''
+
+function Write-OqgCodeRain {
+    param([int]$X,[int]$Y,[int]$Width,[int]$Height)
+    if (-not [bool]$script:OqgCodeRainEnabled) { return }
+    if ($Width -lt 30 -or $Height -lt 5) { return }
+    # Clamp every draw to current console dimensions, leaving the final column unused.
+    try {
+        $consoleWidth = [Console]::WindowWidth
+        $consoleHeight = [Console]::WindowHeight
+        if ($X -lt 0 -or $Y -lt 0 -or ($X + $Width) -ge $consoleWidth -or ($Y + $Height) -ge $consoleHeight) { return }
+    } catch { return }
+
+    $script:OqgCodeRainTick = [int]$script:OqgCodeRainTick + 1
+    # Animations can run at 10 Hz; this layer redraws at about 5 Hz.
+    if (($script:OqgCodeRainTick % 2) -ne 0) { return }
+    $columns = [Math]::Max(4,[int][Math]::Floor(($Width - 4) / 3))
+    $geometry = '{0}/{1}/{2}/{3}' -f $X,$Y,$Width,$Height
+    if ($script:OqgCodeRainLastGeometry -ne $geometry -or @($script:OqgCodeRainHeads).Count -ne $columns) {
+        $script:OqgCodeRainHeads = @()
+        for ($c=0; $c -lt $columns; $c++) { $script:OqgCodeRainHeads += (Get-Random -Minimum (-$Height) -Maximum $Height) }
+        $script:OqgCodeRainLastGeometry = $geometry
+    }
+
+    $alphabet = '0123456789ABCDEF<>/[]{}#@$%*+=?' # code-cipher motif, no file data
+    $screen = [object[]]::new($Height)
+    for ($r=0; $r -lt $Height; $r++) {
+        $screen[$r] = (' ' * $Width).ToCharArray()
+    }
+    $brightCells = @{}
+    for ($c=0; $c -lt $columns; $c++) {
+        $head = [int]$script:OqgCodeRainHeads[$c]
+        $offset = 1 + ($c * 3)
+        for ($t=0; $t -lt 6; $t++) {
+            $r = $head - $t
+            if ($r -ge 0 -and $r -lt $Height -and $offset -lt $Width) {
+                if ((Get-Random -Minimum 0 -Maximum 100) -le (90 - ($t * 8))) {
+                    $screen[$r][$offset] = $alphabet[(Get-Random -Minimum 0 -Maximum $alphabet.Length)]
+                    if ($t -eq 0) { $brightCells[('{0}:{1}' -f $r,$offset)] = $true }
+                }
+            }
+        }
+        $head++
+        if ($head -gt ($Height + (Get-Random -Minimum 0 -Maximum $Height))) { $head = (Get-Random -Minimum (-$Height) -Maximum 0) }
+        $script:OqgCodeRainHeads[$c] = $head
+    }
+    # Draw each line once. Two overlaid color planes emulate the HTML's green/cyan canvas layers.
+    for ($r=0; $r -lt $Height; $r++) {
+        $color = if (($r % 3) -eq 0) { 'Rgb:25,95,109' } else { 'Rgb:19,75,96' }
+        Write-OqgWideLine -Text ('  ' + (-join $screen[$r])) -X $X -Y ($Y + $r) -Width $Width -Color $color
+    }
+    # Draw a small number of moving bright heads. Avoid large numbers of cursor calls.
+    $painted = 0
+    for ($c=0; $c -lt $columns -and $painted -lt 24; $c++) {
+        $head = [int]$script:OqgCodeRainHeads[$c] - 1
+        if ($head -ge 0 -and $head -lt $Height) {
+            $colX = $X + 2 + ($c * 3) + 1
+            $ch = [string]$screen[$head][1 + $c * 3]
+            if ($ch -ne ' ') {
+                Write-OqgWideLine -Text $ch -X $colX -Y ($Y+$head) -Width 1 -Color $(if (($c % 2) -eq 0) { 'Rgb:48,185,171' } else { 'Rgb:65,195,236' })
+                $painted++
+            }
+        }
+    }
+}
+
+# OQG-CODE-RAIN-V11
+# Terminal-native rain with separate state per panel and no clipping markers.
+# A text terminal cannot display real transparent layers. This draws behind
+# *blank* regions across all three menu columns without replacing UI text.
+$script:OqgRainZonesV11 = @{}
+
+function Write-OqgRainZoneV11 {
+    param([string]$Key,[int]$X,[int]$Y,[int]$Width,[int]$Bottom)
+    if ($Width -lt 5 -or $Bottom -lt $Y) { return }
+    $w=0;$h=0
+    try { $w=[Console]::WindowWidth; $h=[Console]::WindowHeight } catch { return }
+    $X=[Math]::Max(0,$X)
+    $Y=[Math]::Max(0,$Y)
+    $maxX=[Math]::Min($X + $Width - 1,$w - 2)
+    $bottomSafe=[Math]::Min($Bottom,$h - 2)
+    if ($maxX -lt $X -or $bottomSafe -lt $Y) { return }
+    $widthSafe=$maxX-$X+1
+    $heightSafe=$bottomSafe-$Y+1
+    $columns=[Math]::Max(1,[int][Math]::Floor($widthSafe/3))
+    $geometry='{0}/{1}/{2}/{3}' -f $X,$Y,$widthSafe,$heightSafe
+    if (-not $script:OqgRainZonesV11.ContainsKey($Key) -or $script:OqgRainZonesV11[$Key].Geometry -ne $geometry) {
+        $heads=@()
+        for($i=0;$i -lt $columns;$i++) { $heads += Get-Random -Minimum (-$heightSafe) -Maximum $heightSafe }
+        $script:OqgRainZonesV11[$Key]=@{ Geometry=$geometry; Heads=$heads; Bounds=@($X,$Y,$widthSafe,$heightSafe) }
+    }
+    $zone=$script:OqgRainZonesV11[$Key]
+    $symbols='0123456789ABCDEF#@%+=/[]{}'
+    $oldFg=$null
+    try {
+        $oldFg=[Console]::ForegroundColor
+        # Clear the prior frame inside only this known blank region.
+        for($row=$Y;$row -le $bottomSafe;$row++) {
+            [Console]::SetCursorPosition($X,$row)
+            [Console]::Write((' ' * $widthSafe))
+        }
+        for($i=0;$i -lt $columns;$i++) {
+            $head=[int]$zone.Heads[$i]
+            $posX=$X+($i*3)
+            for($tail=0;$tail -lt 9;$tail++) {
+                $row=$Y+$head-$tail
+                if($row -lt $Y -or $row -gt $bottomSafe) { continue }
+                if ((Get-Random -Minimum 0 -Maximum 100) -lt (15 + $tail*3)) { continue }
+                $symbol=$symbols[(Get-Random -Minimum 0 -Maximum $symbols.Length)]
+                [Console]::ForegroundColor = if($tail -eq 0) { [ConsoleColor]::Cyan } elseif($tail -lt 3) { [ConsoleColor]::DarkCyan } else { [ConsoleColor]::DarkBlue }
+                [Console]::SetCursorPosition($posX,$row)
+                [Console]::Write([string]$symbol)
+            }
+            $head++
+            if($head -gt ($heightSafe+9)) { $head = Get-Random -Minimum (-$heightSafe) -Maximum 1 }
+            $zone.Heads[$i]=$head
+        }
+    } catch { }
+    finally { try { if($null -ne $oldFg) { [Console]::ForegroundColor=$oldFg } } catch { } }
+}
+
+function Clear-OqgRainZoneV11 {
+    param([string]$Key)
+    if (-not $script:OqgRainZonesV11.ContainsKey($Key)) { return }
+    $b=$script:OqgRainZonesV11[$Key].Bounds
+    try {
+        for($r=[int]$b[1];$r -lt ([int]$b[1]+[int]$b[3]);$r++) {
+            [Console]::SetCursorPosition([int]$b[0],$r)
+            [Console]::Write((' ' * [int]$b[2]))
+        }
+    } catch { }
+}
+
+# OQG-RAIN-AMBIENT-V12
+# Ambient terminal compositor. Decorative glyphs only; no data or input is read.
+# PowerShell 5.1 compatible. Direct console writes avoid UI text clipping/ellipses.
+$script:OqgRainV12Rng = New-Object System.Random
+$script:OqgRainV12 = @{ Signature = ''; Heads = @(); Velocity = @(); Trails = @(); Phase = @(); RowRuns = @(); Tick = 0 }
+
+function New-OqgRainV12State {
+    param([int]$Width,[int]$Height)
+    # One global set of rain columns. Stream movement stays continuous across the three panels.
+    $heads = New-Object 'System.Collections.ArrayList'
+    $velocities = New-Object 'System.Collections.ArrayList'
+    $trails = New-Object 'System.Collections.ArrayList'
+    $phases = New-Object 'System.Collections.ArrayList'
+    for ($x = 0; $x -lt $Width; $x += 2) {
+        [void]$heads.Add($script:OqgRainV12Rng.Next(-$Height,($Height+1)))
+        [void]$velocities.Add($script:OqgRainV12Rng.Next(80,150) / 100.0)
+        [void]$trails.Add($script:OqgRainV12Rng.Next(8,23))
+        [void]$phases.Add($script:OqgRainV12Rng.Next(0,65535))
+    }
+    $script:OqgRainV12 = @{
+        Signature = ('{0}x{1}' -f $Width,$Height)
+        Heads = $heads
+        Velocity = $velocities
+        Trails = $trails
+        Phase = $phases
+        RowRuns = @()
+        Tick = 0
+    }
+}
+
+function Get-OqgRainV12Ranges {
+    param(
+        [int]$Row,[int]$Top,[int]$Bottom,
+        [int]$LeftWidth,[int]$LeftContentBottom,[int]$LogoBottom,
+        [int]$ActionX,[int]$ActionWidth,[int]$ActionEnd,[int]$ActionTextWidth,[int]$SelectedRow,
+        [int]$DashX,[int]$DashWidth,[int]$DashDetailEnd,[int]$DashTelemetryStart,[int]$DashTelemetryEnd,
+        [int]$DashNmsStart,[int]$DashNmsEnd
+    )
+    # Each range is inclusive [start,end], and is known not to contain user-interface text.
+    # Static rows and selected-item highlight receive complete protection.
+    $ranges = @()
+    if ($Row -lt $Top -or $Row -ge $Bottom) { return $ranges }
+    if ($Row -gt ($LeftContentBottom + 3)) {
+        $ranges += ,@([int]1,[int]($LeftWidth - 3))
+    } elseif ($Row -gt $LogoBottom -and $Row -lt ($LeftContentBottom - 4)) {
+        # Narrow atmosphere along the outer edge of the left status rail.
+        $ranges += ,@([int][Math]::Max(1,$LeftWidth - 8),[int]($LeftWidth - 3))
+    }
+    if ($Row -gt ($ActionEnd + 2)) {
+        $ranges += ,@([int]($ActionX + 1),[int]($ActionX + $ActionWidth - 3))
+    } elseif ($Row -ne $SelectedRow -and $Row -ne ($SelectedRow + 1)) {
+        $safeStart = [int][Math]::Min(($ActionX + $ActionWidth - 4),($ActionX + $ActionTextWidth + 4))
+        if ($safeStart -lt ($ActionX + $ActionWidth - 5)) {
+            $ranges += ,@($safeStart,[int]($ActionX + $ActionWidth - 3))
+        }
+    }
+    if ($Row -gt ($DashNmsEnd + 2)) {
+        $ranges += ,@([int]($DashX + 1),[int]($DashX + $DashWidth - 3))
+    } elseif ($Row -gt ($DashDetailEnd + 1) -and $Row -lt ($DashTelemetryStart - 1)) {
+        $ranges += ,@([int]($DashX + 1),[int]($DashX + $DashWidth - 3))
+    } elseif ($Row -gt ($DashTelemetryEnd + 1) -and $Row -lt ($DashNmsStart - 1)) {
+        $ranges += ,@([int]($DashX + 1),[int]($DashX + $DashWidth - 3))
+    } else {
+        # Right-panel gutters only, never overwrite content or separators.
+        $ranges += ,@([int]($DashX + $DashWidth - 5),[int]($DashX + $DashWidth - 3))
+    }
+    return $ranges
+}
+
+function Write-OqgRainV12Run {
+    param([int]$X,[int]$Y,[int]$Width,[int]$CanvasWidth,[int]$CanvasHeight)
+    if ($Width -le 0 -or $X -lt 0 -or $Y -lt 0 -or $Y -ge ($CanvasHeight - 1)) { return }
+    $Width = [Math]::Min($Width, $CanvasWidth - $X - 2)
+    if ($Width -le 0) { return }
+    $state = $script:OqgRainV12
+    $alphabet = '0123456789ABCDEF@{}[]/=+*%'
+    $esc = [string][char]27
+    $sb = New-Object System.Text.StringBuilder
+    $lastColor = ''
+    for ($offset=0; $offset -lt $Width; $offset++) {
+        $px=$X+$offset
+        $ci=[int][Math]::Floor($px / 2)
+        $symbol=' '
+        $color=''
+        if (($px % 2) -eq 0 -and $ci -lt $state.Heads.Count) {
+            $head = [int][Math]::Floor([double]$state.Heads[$ci])
+            $distance = $head - $Y
+            $trailLength = [int]$state.Trails[$ci]
+            if ($distance -ge 0 -and $distance -lt $trailLength) {
+                $chance = if ($distance -le 1) { 93 } elseif ($distance -lt 5) { 78 } else { 58 }
+                if ($script:OqgRainV12Rng.Next(0,100) -lt $chance) {
+                    $symbol = [string]$alphabet[$script:OqgRainV12Rng.Next(0,$alphabet.Length)]
+                    $frac = 1.0 - ($distance / [double]$trailLength)
+                    if ($distance -eq 0) { $r=132; $g=231; $b=255 }
+                    elseif ($distance -le 2) { $r=35; $g=169; $b=214 }
+                    else {
+                        # Continuous midnight blue -> teal -> icy cyan tail gradient.
+                        $r=[int](6 + 22*$frac)
+                        $g=[int](26 + 116*$frac)
+                        $b=[int](48 + 155*$frac)
+                    }
+                    $color=('{0};{1};{2}' -f $r,$g,$b)
+                }
+            } elseif ((($px + ($Y*3) + [int]$state.Tick) % 7) -eq 0 -and $script:OqgRainV12Rng.Next(0,1000) -lt 11) {
+                $symbol = [string]$alphabet[$script:OqgRainV12Rng.Next(0,$alphabet.Length)]
+                $color='8;31;48'
+            }
+        }
+        if ($color -ne $lastColor) {
+            if ($color -eq '') { [void]$sb.Append($esc+'[0m') }
+            else { [void]$sb.Append($esc+'[38;2;'+$color+'m') }
+            $lastColor=$color
+        }
+        [void]$sb.Append($symbol)
+    }
+    [void]$sb.Append($esc+'[0m')
+    try {
+        [Console]::SetCursorPosition($X,$Y)
+        [Console]::Write($sb.ToString())
+    } catch { }
+}
+
+function Invoke-OqgAmbientRainV12 {
+    param(
+        [int]$LeftWidth,[int]$LeftContentBottom,[int]$LogoBottom,
+        [int]$ActionX,[int]$ActionWidth,[int]$ActionEnd,[int]$ActionTextWidth,[int]$SelectedRow,
+        [int]$DashX,[int]$DashWidth,[int]$DashDetailEnd,[int]$DashTelemetryStart,[int]$DashTelemetryEnd,
+        [int]$DashNmsStart,[int]$DashNmsEnd,[int]$BodyTop,[int]$FooterTop
+    )
+    if (-not [bool]$script:OqgCodeRainEnabled) { return }
+    $w=0;$h=0
+    try { $w=[int][Console]::WindowWidth; $h=[int][Console]::WindowHeight } catch { return }
+    if ($w -lt 100 -or $h -lt 27) { return }
+    $sig='{0}x{1}' -f $w,$h
+    if ($script:OqgRainV12.Signature -ne $sig) { New-OqgRainV12State -Width $w -Height $h }
+    $st=$script:OqgRainV12
+    $st.Tick=[int]$st.Tick+1
+    # Movement is independent from panel positions; use the same stream across every zone.
+    for($i=0;$i -lt $st.Heads.Count;$i++) {
+        $st.Heads[$i]=[double]$st.Heads[$i] + [double]$st.Velocity[$i]
+        if ([double]$st.Heads[$i] -gt ($h+[int]$st.Trails[$i])) {
+            $st.Heads[$i]=$script:OqgRainV12Rng.Next(-$h,1)
+            $st.Velocity[$i]=$script:OqgRainV12Rng.Next(70,145)/100.0
+            $st.Trails[$i]=$script:OqgRainV12Rng.Next(9,23)
+        }
+    }
+    $runs = New-Object 'System.Collections.ArrayList'
+    $lo = [Math]::Max(3,$BodyTop)
+    $hi = [Math]::Min(($h-3),($FooterTop-1))
+    for($row=$lo;$row -le $hi;$row++) {
+        $ranges = @(Get-OqgRainV12Ranges -Row $row -Top $BodyTop -Bottom $FooterTop -LeftWidth $LeftWidth -LeftContentBottom $LeftContentBottom -LogoBottom $LogoBottom -ActionX $ActionX -ActionWidth $ActionWidth -ActionEnd $ActionEnd -ActionTextWidth $ActionTextWidth -SelectedRow $SelectedRow -DashX $DashX -DashWidth $DashWidth -DashDetailEnd $DashDetailEnd -DashTelemetryStart $DashTelemetryStart -DashTelemetryEnd $DashTelemetryEnd -DashNmsStart $DashNmsStart -DashNmsEnd $DashNmsEnd)
+        foreach($range in $ranges) {
+            $x0=[int]$range[0];$x1=[int]$range[1]
+            $x0=[Math]::Max(1,$x0);$x1=[Math]::Min(($w-3),$x1)
+            if($x1 -lt $x0) {continue}
+            Write-OqgRainV12Run -X $x0 -Y $row -Width ($x1-$x0+1) -CanvasWidth $w -CanvasHeight $h
+            [void]$runs.Add(@($x0,$row,$x1-$x0+1))
+        }
+    }
+    $st.RowRuns=$runs
+}
+
+function Clear-OqgAmbientRainV12 {
+    if ($null -eq $script:OqgRainV12 -or $null -eq $script:OqgRainV12.RowRuns) { return }
+    foreach($run in @($script:OqgRainV12.RowRuns)) {
+        try {
+            [Console]::SetCursorPosition([int]$run[0],[int]$run[1])
+            [Console]::Write((' ' * [int]$run[2]))
+        } catch { }
+    }
+    $script:OqgRainV12.RowRuns=@()
+}
+
+# OQG-RAIN-FAST-START-V22
+# Single world-space rain field. No rectangular rain zones.
+# NMS is paused while rain is active. Decorative only.
+$script:OqgRainV22 = @{
+    # Frame is committed as ONE ANSI write, not thousands of cursor writes.
+    Pending = $null
+    Geometry = ''
+    Drops = @()
+    Previous = @{}
+    Rng = (New-Object System.Random)
+    Clock = [System.Diagnostics.Stopwatch]::StartNew()
+    LastSeconds = 0.0
+    MaskKey = ''
+    Mask = $null
+    LastSelectedRow = -9999
+    Foreground = $null
+    ForegroundKey = ''
+    SnapshotMethod = 'pending'
+}
+
+# Read foreground text from the console after the UI has painted it.
+# These are the actual occupied cells, not guessed panel widths. Optional:
+# if the host does not expose a Win32 screen buffer, use the legacy mask.
+function Get-OqgRainV22ForegroundMask {
+    param([int]$Width,[int]$Height,[int]$BodyTop,[int]$FooterTop)
+    if ($env:OS -ne 'Windows_NT') { return $null }
+    try {
+        if (-not ('OqgRainNativeV22' -as [type])) {
+            Add-Type -Language CSharp -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class OqgRainNativeV22 {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Coord { public short X; public short Y; public Coord(short x, short y) { X=x; Y=y; } }
+    [DllImport("kernel32.dll", SetLastError=true)]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, EntryPoint="ReadConsoleOutputCharacterW", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ReadChars(IntPtr console, StringBuilder buffer, int length, Coord coord, out int read);
+}
+'@ -ErrorAction Stop
+        }
+        $handle=[OqgRainNativeV22]::GetStdHandle(-11)
+        if ($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)) { return $null }
+        $mask=New-Object 'System.Boolean[]' ($Width*$Height)
+        $winTop=0; $winLeft=0
+        try { $winTop=[Console]::WindowTop; $winLeft=[Console]::WindowLeft } catch { }
+        for ($y=$BodyTop; $y -lt $FooterTop; $y++) {
+            $buffer=New-Object System.Text.StringBuilder ($Width+2)
+            $count=0
+            $pos=New-Object -TypeName OqgRainNativeV22+Coord -ArgumentList @([int16]$winLeft,[int16]($y+$winTop))
+            if (-not [OqgRainNativeV22]::ReadChars($handle,$buffer,$Width,$pos,[ref]$count) -or $count -lt $Width) {
+                return $null
+            }
+            $raw=$buffer.ToString()
+            if ($raw.Length -lt $Width) { return $null }
+            for ($x=2; $x -lt ($Width-2); $x++) {
+                $char=$raw[$x]
+                $mask[($y*$Width)+$x]=($char -eq ' ' -or $char -eq [char]0)
+            }
+        }
+        return ,$mask
+    } catch { return $null }
+}
+
+function Reset-OqgRainV22 {
+    param([int]$Width,[int]$Height,[int]$BodyTop,[int]$FooterTop)
+    $s = $script:OqgRainV22
+    $rng = $s.Rng
+    $drops = New-Object 'System.Collections.ArrayList'
+    $span = [Math]::Max(1, $FooterTop-$BodyTop)
+    for ($layer=0; $layer -lt 2; $layer++) {
+        $step = if ($layer -eq 0) { 4 } else { 5 }
+        $offset = if ($layer -eq 0) { 2 } else { 3 }
+        for ($x=$offset; $x -lt ($Width-2); $x+=$step) {
+            # Independent stream phases. No lane bands and no pre-clipped boxes.
+            for ($lane=0; $lane -lt 2; $lane++) {
+                $len = if ($layer -eq 0) { $rng.Next(13,24) } else { $rng.Next(9,20) }
+                [void]$drops.Add(@{
+                    X = [int]$x
+                    Head = [double]($BodyTop + ($span*($lane + $rng.NextDouble())/2.0))
+                    Rate = [double](13.0 + $rng.NextDouble()*7.0 + $layer)
+                    Length = [int]$len
+                    Seed = [int]$rng.Next(1,10000000)
+                    Glyphs = $null
+                    Layer = [int]$layer
+                })
+            }
+        }
+    }
+    # Resolve the stream glyphs before painting the menu. The hot path can
+    # index immutable per-stream characters instead of invoking a PS function
+    # thousands of times during the first frame.
+    foreach ($d in $drops) {
+        $d.Glyphs = Get-OqgRainV22GlyphStrip -Seed ([int]$d.Seed) -Length ([int]$d.Length)
+    }
+    $s.Geometry = ('{0}x{1}:{2}:{3}' -f $Width,$Height,$BodyTop,$FooterTop)
+    $s.Drops = $drops
+    $s.Previous = @{}
+    $s.Clock.Restart()
+    $s.LastSeconds = 0.0
+    $s.MaskKey = ''
+    $s.Mask = $null
+    $s.LastSelectedRow = -9999
+    $s.Foreground = $null
+    $s.ForegroundKey = ''
+    $s.SnapshotMethod = 'pending'
+}
+
+function Test-OqgRainV22Allowed {
+    param(
+        [int]$X,[int]$Y,[int]$Width,[int]$BodyTop,[int]$FooterTop,
+        [int]$LeftWidth,[int]$LeftContentBottom,[int]$LogoBottom,
+        [int]$ActionX,[int]$ActionWidth,[int]$ActionEnd,[int]$ActionTextWidth,
+        [int]$DashX,[int]$DashWidth,[int]$DashDetailEnd,[int]$DashTelemetryStart,
+        [int]$DashTelemetryEnd,[int]$DashNmsStart,[int]$DashNmsEnd,
+        [int]$PageStart,[int]$PageEnd,[int]$RowStep,
+        [int]$SelectedRow,[int]$LeftMeterY=-1,[int]$DashMeterY=-1
+    )
+    if ($Y -lt $BodyTop -or $Y -ge $FooterTop -or $X -le 1 -or $X -ge ($Width-2)) { return $false }
+    # Strict occlusion: no rain in either row of the active blue selection.
+    # The selected highlight is opaque from the first cell through the panel edge.
+    if ($Y -ge $SelectedRow -and $Y -le ($SelectedRow + 1) -and
+        $X -ge $ActionX -and $X -lt ($ActionX + $ActionWidth)) { return $false }
+    # Meter protection covers only the painted bar, label and legend.
+    # The free space to the right remains available for uninterrupted rain.
+    if ($LeftMeterY -ge 0 -and $Y -ge $LeftMeterY -and $Y -le ($LeftMeterY + 2) -and
+        $X -ge 0 -and $X -lt $(if ($Y -eq ($LeftMeterY + 2)) { 25 } else { 31 })) { return $false }
+    if ($DashMeterY -ge 0 -and $Y -ge $DashMeterY -and $Y -le ($DashMeterY + 1) -and
+        $X -ge $DashX -and $X -lt ($DashX + 31)) { return $false }
+    # Protect vertical chrome / panel dividers, not entire pane rectangles.
+    if ([Math]::Abs($X-$LeftWidth) -lt 2 -or [Math]::Abs($X-$ActionX) -lt 2 -or
+        [Math]::Abs($X-$DashX) -lt 2) { return $false }
+    if ($X -lt $LeftWidth) {
+        if ($Y -le $LogoBottom) { return $false }
+        # The left metadata spans roughly 20 rows. On its blank interlines,
+        # rain can travel through the full width.
+        $relative = $Y - ($LogoBottom+1)
+        # Protect only the visible content length, not a 45-character black slab.
+        # Lengths include the leading panel indent and a short safety margin.
+        $occupiedWidths = @{
+            0=23; 2=35; 3=29; 4=25; 6=30; 8=43; 9=23; 10=37;
+            13=16; 15=25; 16=31; 17=36; 19=39; 20=37; 21=24
+        }
+        if ($occupiedWidths.ContainsKey($relative) -and
+            $X -lt [Math]::Min($LeftWidth-3, [int]$occupiedWidths[$relative])) { return $false }
+        if ($Y -le ($LeftContentBottom+2) -and $X -lt 8) { return $false }
+        return $true
+    }
+    if ($X -gt $ActionX -and $X -lt ($ActionX+$ActionWidth-1)) {
+        if ($Y -le ($BodyTop+1)) { return $false } # section count, horizontal rule
+        if ($Y -le $ActionEnd) {
+            $delta = $Y-($BodyTop+2)
+            $r = $delta % [Math]::Max(1,$RowStep)
+            # Only the actual label and its description rows need protection;
+            # the gap rows still receive rain across their whole width.
+            if (($r -eq 0 -or $r -eq 1) -and
+                $X -lt ($ActionX+[Math]::Min($ActionWidth-3,$ActionTextWidth+12))) { return $false }
+        }
+        return $true
+    }
+    if ($X -gt $DashX -and $X -lt ($DashX+$DashWidth-1)) {
+        if ($Y -eq $DashDetailEnd -or $Y -eq $DashTelemetryEnd -or
+            $Y -eq ($DashNmsStart-1)) { return $false } # section dividers
+        $xText = [Math]::Min($DashWidth-3,43)
+        if ($X -gt ($DashX+$xText)) { return $true }
+        if ($Y -ge $BodyTop -and $Y -lt $DashDetailEnd) {
+            $r=$Y-$BodyTop
+            if ($r -in @(0,2,3,4,5,6,8,9,11,12)) { return $false }
+        }
+        if ($Y -ge $DashTelemetryStart -and $Y -lt $DashTelemetryEnd) {
+            $r=$Y-$DashTelemetryStart
+            if ($r -in @(0,2,3,4,5,6,7,8,9,10,12,13,14,15,16)) { return $false }
+        }
+        if ($Y -ge $DashNmsStart -and $Y -le $DashNmsEnd) {
+            $r=$Y-$DashNmsStart
+            if ($r -in @(0,2,3,4,5,6)) { return $false }
+        }
+        return $true
+    }
+    return $false
+}
+
+function Update-OqgRainV22Mask {
+    param(
+        [int]$Width,[int]$Height,[int]$BodyTop,[int]$FooterTop,
+        [int]$LeftWidth,[int]$LeftContentBottom,[int]$LogoBottom,
+        [int]$ActionX,[int]$ActionWidth,[int]$ActionEnd,[int]$ActionTextWidth,[int]$SelectedRow,
+        [int]$DashX,[int]$DashWidth,[int]$DashDetailEnd,[int]$DashTelemetryStart,[int]$DashTelemetryEnd,
+        [int]$DashNmsStart,[int]$DashNmsEnd,
+        [int]$PageStart,[int]$PageEnd,[int]$RowStep,
+        [int]$LeftMeterY,[int]$DashMeterY
+    )
+    $state=$script:OqgRainV22
+    $scene=('{0}x{1}:{2}:{3}' -f $Width,$Height,$BodyTop,$FooterTop)
+    if ($state.ForegroundKey -ne $scene) {
+        $state.Foreground = Get-OqgRainV22ForegroundMask -Width $Width -Height $Height -BodyTop $BodyTop -FooterTop $FooterTop
+        $state.ForegroundKey = $scene
+        $state.SnapshotMethod = if ($null -eq $state.Foreground) { 'fallback mask' } else { 'screen buffer' }
+    }
+    $identity=('{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}|{10}|{11}|{12}|{13}|{14}|{15}|{16}|{17}|{18}|{19}|{20}' -f
+        $Width,$Height,$BodyTop,$FooterTop,$LeftWidth,$LeftContentBottom,$LogoBottom,$ActionX,$ActionWidth,
+        $ActionEnd,$ActionTextWidth,$DashX,$DashWidth,$DashDetailEnd,$DashTelemetryStart,
+        $DashTelemetryEnd,$DashNmsStart,$DashNmsEnd,$LeftMeterY,$DashMeterY,$RowStep)
+    if ($identity -eq $state.MaskKey -and $null -ne $state.Mask) { return }
+    $mask=New-Object 'System.Boolean[]' ($Width*$Height)
+    $columnIndex=@{}
+    foreach ($drop in $state.Drops) { $columnIndex[[int]$drop.X]=$true }
+    $columns=@($columnIndex.Keys)
+    for ($y=$BodyTop; $y -lt $FooterTop; $y++) {
+        foreach ($column in $columns) {
+            $x=[int]$column
+            if ($null -ne $state.Foreground) {
+                # Capture real UI text, including the exact length of meter labels,
+                # menu descriptions, status lines, separators and ASCII artwork.
+                $ok=[bool]$state.Foreground[($y*$Width)+$x]
+                # Selection background is opaque even where its cells are spaces.
+                if ($y -ge $SelectedRow -and $y -le ($SelectedRow+1) -and
+                    $x -ge $ActionX -and $x -lt ($ActionX+$ActionWidth)) { $ok=$false }
+                # Keep full bars opaque, but do not block the blank columns after them.
+                if ($LeftMeterY -ge 0 -and $y -ge $LeftMeterY -and $y -le ($LeftMeterY+1) -and $x -lt 31) { $ok=$false }
+                if ($DashMeterY -ge 0 -and $y -ge $DashMeterY -and $y -le ($DashMeterY+1) -and
+                    $x -ge $DashX -and $x -lt ($DashX+31)) { $ok=$false }
+                # Reserve the panel columns themselves.
+                if ([Math]::Abs($x-$LeftWidth) -lt 2 -or [Math]::Abs($x-$ActionX) -lt 2 -or
+                    [Math]::Abs($x-$DashX) -lt 2) { $ok=$false }
+            } else {
+                $ok=Test-OqgRainV22Allowed -X $x -Y $y -Width $Width -BodyTop $BodyTop -FooterTop $FooterTop `
+                    -LeftWidth $LeftWidth -LeftContentBottom $LeftContentBottom -LogoBottom $LogoBottom `
+                    -ActionX $ActionX -ActionWidth $ActionWidth -ActionEnd $ActionEnd -ActionTextWidth $ActionTextWidth `
+                    -DashX $DashX -DashWidth $DashWidth -DashDetailEnd $DashDetailEnd `
+                    -DashTelemetryStart $DashTelemetryStart -DashTelemetryEnd $DashTelemetryEnd `
+                    -DashNmsStart $DashNmsStart -DashNmsEnd $DashNmsEnd -PageStart $PageStart -PageEnd $PageEnd `
+                    -RowStep $RowStep -SelectedRow -9999 -LeftMeterY $LeftMeterY -DashMeterY $DashMeterY
+            }
+            $mask[($y*$Width)+$x]=$ok
+        }
+    }
+    $state.Mask=$mask
+    $state.MaskKey=$identity
+    # Preserve the existing delta buffer during idle animation. Selection
+    # changes are handled by the selected-row exclusion in the paint loop.
+    $state.Previous=@{}
+}
+
+function Write-OqgRainV22Cell {
+    param([int]$X,[int]$Y,[string]$Glyph,[string]$Color)
+    # Compatible with Windows PowerShell 5.1 and Windows Terminal VT sequences.
+    # Only rain-owned glyphs are erased. No row/panel/rectangle clearing.
+    try {
+        $esc=[string][char]27
+        $sequence = $esc + '[' + ($Y+1) + ';' + ($X+1) + 'H'
+        if ([string]::IsNullOrEmpty($Color)) {
+            $sequence += $esc + '[39m '
+        } else {
+            $sequence += $esc + '[38;2;' + $Color + 'm' + $Glyph
+        }
+        if ($null -ne $script:OqgRainV22.Pending) {
+            [void]$script:OqgRainV22.Pending.Append($sequence)
+        } else {
+            [Console]::Write($sequence + $esc + '[0m')
+        }
+    } catch { }
+}
+
+function Flush-OqgRainV22 {
+    if ($null -eq $script:OqgRainV22.Pending) { return }
+    try {
+        $text = $script:OqgRainV22.Pending.ToString()
+        if ($text.Length -gt 0) {
+            [Console]::Write($text + [string][char]27 + '[0m')
+        }
+    } finally {
+        $script:OqgRainV22.Pending = $null
+    }
+}
+
+function Get-OqgRainV22Glyph {
+    param([int]$Seed,[int]$TrailIndex)
+    $chars = '0123456789ABCDEF[]{}+*/=%@'
+    $n = (([long]$Seed*17L)+([long]$TrailIndex*103L)+([long]$TrailIndex*$TrailIndex*7L)) % [long]$chars.Length
+    return [string]$chars[[int]$n]
+}
+
+function Get-OqgRainV22GlyphStrip {
+    param([int]$Seed,[int]$Length)
+    $characters='0123456789ABCDEF[]{}+*/=%@'
+    $builder=New-Object System.Text.StringBuilder ([Math]::Max(1,$Length))
+    for ($i=0; $i -lt $Length; $i++) {
+        $index=(([long]$Seed*17L)+([long]$i*103L)+([long]$i*$i*7L)) % [long]$characters.Length
+        [void]$builder.Append($characters[[int]$index])
+    }
+    return $builder.ToString()
+}
+
+# Called at the start of Main-Menu, before the fullscreen UI is painted.
+# No terminal writes, no screen reads, and no changes to cryptography.
+function Initialize-OqgRainV22BeforeMenu {
+    if (-not [bool]$script:OqgCodeRainEnabled) { return }
+    try {
+        $w=[int][Console]::WindowWidth
+        $h=[int][Console]::WindowHeight
+        if ($w -lt 100 -or $h -lt 28) { return }
+        $expected=('{0}x{1}:{2}:{3}' -f $w,$h,3,($h-4))
+        if ($script:OqgRainV22.Geometry -ne $expected) {
+            Reset-OqgRainV22 -Width $w -Height $h -BodyTop 3 -FooterTop ($h-4)
+        }
+    } catch { }
+}
+
+function Invoke-OqgAmbientRainV22 {
+    param(
+        [int]$LeftWidth,[int]$LeftContentBottom,[int]$LogoBottom,
+        [int]$ActionX,[int]$ActionWidth,[int]$ActionEnd,[int]$ActionTextWidth,[int]$SelectedRow,
+        [int]$DashX,[int]$DashWidth,[int]$DashDetailEnd,[int]$DashTelemetryStart,[int]$DashTelemetryEnd,
+        [int]$DashNmsStart,[int]$DashNmsEnd,[int]$BodyTop,[int]$FooterTop,
+        [int]$PageStart=0,[int]$PageEnd=12,[int]$RowStep=3,
+        [int]$LeftMeterY=-1,[int]$DashMeterY=-1
+    )
+    if (-not [bool]$script:OqgCodeRainEnabled) { return }
+    try {
+        $width=[int][Console]::WindowWidth
+        $height=[int][Console]::WindowHeight
+        if ($width -lt 100 -or $height -lt 28) { return }
+        $s=$script:OqgRainV22
+        $geometry=('{0}x{1}:{2}:{3}' -f $width,$height,$BodyTop,$FooterTop)
+        if ($s.Geometry -ne $geometry) {
+            Reset-OqgRainV22 -Width $width -Height $height -BodyTop $BodyTop -FooterTop $FooterTop
+        }
+        Update-OqgRainV22Mask -Width $width -Height $height -BodyTop $BodyTop -FooterTop $FooterTop `
+            -LeftWidth $LeftWidth -LeftContentBottom $LeftContentBottom -LogoBottom $LogoBottom `
+            -ActionX $ActionX -ActionWidth $ActionWidth -ActionEnd $ActionEnd -ActionTextWidth $ActionTextWidth -SelectedRow $SelectedRow `
+            -DashX $DashX -DashWidth $DashWidth -DashDetailEnd $DashDetailEnd `
+            -DashTelemetryStart $DashTelemetryStart -DashTelemetryEnd $DashTelemetryEnd `
+            -DashNmsStart $DashNmsStart -DashNmsEnd $DashNmsEnd `
+            -PageStart $PageStart -PageEnd $PageEnd -RowStep $RowStep -LeftMeterY $LeftMeterY -DashMeterY $DashMeterY
+        $mask=$s.Mask
+        if ([int]$s.LastSelectedRow -ne $SelectedRow) {
+            # Preserve prior rain cells in untouched background areas so they
+            # can be erased by the normal delta renderer, not left as ghosts.
+            $s.LastSelectedRow=$SelectedRow
+        }
+        $now=[double]$s.Clock.Elapsed.TotalSeconds
+        $dt=[Math]::Min(0.20,[Math]::Max(0.0,$now-[double]$s.LastSeconds))
+        $s.LastSeconds=$now
+        $forcePaintV24=$false # V27: preserve rain delta animation across menu navigation
+        $next=@{}
+        foreach ($d in $s.Drops) {
+            $d.Head=[double]$d.Head+([double]$d.Rate*$dt)
+            if ($d.Head -ge ($FooterTop+$d.Length)) {
+                # Recycle just above the screen, without spending a whole
+                # screen's travel time offscreen.
+                $d.Head=[double]($BodyTop-1-$s.Rng.Next(0,5))
+                $d.Length=[int]$(if ($d.Layer -eq 0) { $s.Rng.Next(13,24) } else { $s.Rng.Next(9,20) })
+                $d.Rate=[double](13.0+$s.Rng.NextDouble()*7.0+$d.Layer)
+                $d.Seed=[int]$s.Rng.Next(1,10000000)
+                $d.Glyphs=Get-OqgRainV22GlyphStrip -Seed ([int]$d.Seed) -Length ([int]$d.Length)
+            }
+            $head=[int][Math]::Floor([double]$d.Head)
+            $x=[int]$d.X
+            $len=[int]$d.Length
+            for ($t=0; $t -lt $len; $t++) {
+                $y=$head-$t
+                if ($y -lt $BodyTop -or $y -ge $FooterTop) { continue }
+                if (-not $mask[($y*$width)+$x]) { continue }
+                if ($y -ge $SelectedRow -and $y -le ($SelectedRow+1) -and
+                    $x -ge $ActionX -and $x -lt ($ActionX+$ActionWidth)) { continue }
+                $intensity=1.0-($t/[double][Math]::Max(1,$len-1))
+                $layer=[int]$d.Layer
+                if ($layer -eq 0) {
+                    $r=[int](2+22*$intensity);$g=[int](17+105*$intensity);$b=[int](37+118*$intensity)
+                    if ($t -eq 0) { $r=44;$g=160;$b=204 }
+                } else {
+                    $r=[int](2+28*$intensity);$g=[int](22+143*$intensity);$b=[int](47+172*$intensity)
+                    if ($t -eq 0) { $r=145;$g=237;$b=255 }
+                    elseif ($t -eq 1) { $r=56;$g=200;$b=244 }
+                }
+                $color=('{0};{1};{2}' -f $r,$g,$b)
+                $glyph=([string]$d.Glyphs).Substring($t,1)
+                $key=('{0},{1}' -f $x,$y)
+                $brightness=$g+$b
+                if (-not $next.ContainsKey($key) -or [int]$next[$key][4] -lt $brightness) {
+                    $next[$key]=@($x,$y,$glyph,$color,$brightness)
+                }
+            }
+        }
+        # Begin an atomic VT batch. Initial frame is fully seeded and painted
+        # without waiting for dozens of successive Console.SetCursorPosition calls.
+        $s.Pending = New-Object System.Text.StringBuilder 65536
+        foreach ($key in @($s.Previous.Keys)) {
+            if (-not $next.ContainsKey($key)) {
+                $old=$s.Previous[$key]
+                $oldX=[int]$old[0]; $oldY=[int]$old[1]
+                if ($oldX -ge 0 -and $oldX -lt $width -and $oldY -ge 0 -and $oldY -lt $height -and $mask[($oldY*$width)+$oldX] -and -not (
+                    $oldY -ge $SelectedRow -and $oldY -le ($SelectedRow+1) -and
+                    $oldX -ge $ActionX -and $oldX -lt ($ActionX+$ActionWidth))) {
+                    Write-OqgRainV22Cell -X $oldX -Y $oldY -Glyph ' ' -Color ''
+                }
+            }
+        }
+        foreach ($key in @($next.Keys)) {
+            $cell=$next[$key]
+            $old=$null
+            if ($s.Previous.ContainsKey($key)) { $old=$s.Previous[$key] }
+            if ($forcePaintV24 -or $null -eq $old -or [string]$old[2] -cne [string]$cell[2] -or [string]$old[3] -cne [string]$cell[3]) {
+                Write-OqgRainV22Cell -X ([int]$cell[0]) -Y ([int]$cell[1]) -Glyph ([string]$cell[2]) -Color ([string]$cell[3])
+            }
+        }
+        Flush-OqgRainV22
+        $script:OqgRainMenuRepaintV24=$false
+        $s.Previous=$next
+    } catch {
+        $script:OqgRainV22.Pending = $null
+        $script:OqgCodeRainEnabled=$false
+    }
+}
+
+function Clear-OqgAmbientRainV22 {
+    try {
+        $script:OqgRainV22.Pending = New-Object System.Text.StringBuilder 65536
+        foreach ($cell in @($script:OqgRainV22.Previous.Values)) {
+            Write-OqgRainV22Cell -X ([int]$cell[0]) -Y ([int]$cell[1]) -Glyph ' ' -Color ''
+        }
+        Flush-OqgRainV22
+        $script:OqgRainV22.Previous=@{}
+    } catch { $script:OqgRainV22.Pending = $null }
+}
+
+# Accessible terminal approximation of text bloom: high-contrast luminous
+# foreground gradient on the existing opaque blue selection background.
+# This cannot perform pixel glow in a character-cell renderer.
+function Write-OqgBloomSelectionV19 {
+    param([string]$Text,[int]$X,[int]$Y,[int]$Width,[string]$Background)
+    $segments = @(New-GradientSegments -Text $Text -StartRgb @(106,209,255) -EndRgb @(245,252,255) -BackgroundColor $Background -Bold)
+    Write-MenuRenderLineAt -Line (New-ConsoleRichLine -Segments $segments) -X $X -Y $Y -Width $Width
+}
+
+# OQG-TRANSITION-RAIN-V23
+# Independent half-density code rain for the startup and exit pages.
+# No modification of v22 menu rain state; only background console cells painted.
+function Invoke-OqgTransitionRainV23 {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('Boot','Exit')][string]$Mode,
+        [int]$DurationMilliseconds = 1400,
+        [switch]$WaitForEnter
+    )
+    if (-not [bool]$script:OqgCodeRainEnabled) {
+        if ($WaitForEnter) {
+            while ($true) {
+                $key = [Console]::ReadKey($true)
+                if ($key.Key -eq [ConsoleKey]::Enter -or $key.Key -eq [ConsoleKey]::Escape) { break }
+            }
+        } elseif ($DurationMilliseconds -gt 0) {
+            Start-Sleep -Milliseconds $DurationMilliseconds
+        }
+        return
+    }
+
+    $width=0; $height=0
+    try { $width=[int][Console]::WindowWidth; $height=[int][Console]::WindowHeight } catch { }
+    if ($width -lt 65 -or $height -lt 20) {
+        if ($WaitForEnter) {
+            while ($true) {
+                $key=[Console]::ReadKey($true)
+                if ($key.Key -eq [ConsoleKey]::Enter -or $key.Key -eq [ConsoleKey]::Escape) { break }
+            }
+        } elseif ($DurationMilliseconds -gt 0) { Start-Sleep -Milliseconds $DurationMilliseconds }
+        return
+    }
+
+    $top=1; $bottom=$height-2
+    # Snapshot the already drawn startup or farewell page, before adding rain.
+    # Preserve all visible text, horizontal rules, progress meters and artwork.
+    $foreground=$null
+    try {
+        $foreground=Get-OqgRainV22ForegroundMask -Width $width -Height $height -BodyTop $top -FooterTop $bottom
+    } catch { $foreground=$null }
+
+    $allowed=New-Object 'System.Boolean[]' ($width*$height)
+    for ($y=$top; $y -lt $bottom; $y++) {
+        for ($x=2; $x -lt ($width-2); $x++) {
+            if ($null -ne $foreground) {
+                $allowed[($y*$width)+$x] = [bool]$foreground[($y*$width)+$x]
+            } elseif ($Mode -eq 'Boot') {
+                # No console snapshot: preserve logo and boot content above it.
+                $allowed[($y*$width)+$x] = ($y -ge [int]($height*0.67))
+            } else {
+                # No console snapshot: protect the central farewell card.
+                $centerLeft=[int][Math]::Max(0,[Math]::Floor(($width-84)/2))
+                $centerRight=[int][Math]::Min($width-1,$centerLeft+84)
+                $centerTop=[int][Math]::Max(2,[Math]::Floor($height/2)-7)
+                $allowed[($y*$width)+$x] = -not ($x -ge $centerLeft -and $x -le $centerRight -and
+                    $y -ge $centerTop -and $y -le ($centerTop+15))
+            }
+        }
+    }
+
+    $rng=New-Object System.Random
+    $drops=New-Object System.Collections.ArrayList
+    $span=[Math]::Max(2,$bottom-$top)
+    # Main menu v22 uses two lanes for each of two overlapping layers.
+    # These transition screens use ONE lane per layer, approximately 50% density.
+    for ($layer=0; $layer -lt 2; $layer++) {
+        $step=if ($layer -eq 0) { 4 } else { 5 }
+        $offset=if ($layer -eq 0) { 2 } else { 3 }
+        for ($x=$offset; $x -lt ($width-2); $x+=$step) {
+            $len=if ($layer -eq 0) { $rng.Next(13,24) } else { $rng.Next(9,20) }
+            $seed=$rng.Next(1,10000000)
+            [void]$drops.Add(@{
+                X=[int]$x
+                Head=[double]($top+$rng.NextDouble()*$span)
+                Rate=[double](13.0+$rng.NextDouble()*7.0+$layer)
+                Length=[int]$len
+                Seed=[int]$seed
+                Glyphs=(Get-OqgRainV22GlyphStrip -Seed $seed -Length $len)
+                Layer=[int]$layer
+            })
+        }
+    }
+    $previous=@{}
+    $clock=[System.Diagnostics.Stopwatch]::StartNew()
+    $last=0.0
+    $esc=[string][char]27
+    $keepRunning=$true
+    try {
+        while ($keepRunning) {
+            $elapsed=[double]$clock.Elapsed.TotalSeconds
+            $dt=[Math]::Min(0.12,[Math]::Max(0.0,$elapsed-$last))
+            $last=$elapsed
+            $next=@{}
+            foreach ($drop in $drops) {
+                $drop.Head=[double]$drop.Head+([double]$drop.Rate*$dt)
+                if ($drop.Head -ge ($bottom+$drop.Length)) {
+                    $drop.Head=[double]($top-1-$rng.Next(0,4))
+                    $drop.Length=[int]$(if ($drop.Layer -eq 0) { $rng.Next(13,24) } else { $rng.Next(9,20) })
+                    $drop.Rate=[double](13.0+$rng.NextDouble()*7.0+$drop.Layer)
+                    $drop.Seed=[int]$rng.Next(1,10000000)
+                    $drop.Glyphs=Get-OqgRainV22GlyphStrip -Seed $drop.Seed -Length $drop.Length
+                }
+                $head=[int][Math]::Floor([double]$drop.Head)
+                $x=[int]$drop.X
+                $len=[int]$drop.Length
+                for ($trail=0; $trail -lt $len; $trail++) {
+                    $y=$head-$trail
+                    if ($y -lt $top -or $y -ge $bottom) { continue }
+                    if (-not $allowed[($y*$width)+$x]) { continue }
+                    $intensity=1.0-($trail/[double][Math]::Max(1,$len-1))
+                    if ($drop.Layer -eq 0) {
+                        $r=[int](2+22*$intensity); $g=[int](17+105*$intensity); $b=[int](37+118*$intensity)
+                        if ($trail -eq 0) { $r=44;$g=160;$b=204 }
+                    } else {
+                        $r=[int](2+28*$intensity); $g=[int](22+143*$intensity); $b=[int](47+172*$intensity)
+                        if ($trail -eq 0) { $r=145;$g=237;$b=255 }
+                        elseif ($trail -eq 1) { $r=56;$g=200;$b=244 }
+                    }
+                    $brightness=$g+$b
+                    $key=('{0},{1}' -f $x,$y)
+                    if (-not $next.ContainsKey($key) -or [int]$next[$key][4] -lt $brightness) {
+                        $next[$key]=@($x,$y,([string]$drop.Glyphs).Substring($trail,1),('{0};{1};{2}' -f $r,$g,$b),$brightness)
+                    }
+                }
+            }
+            $batch=New-Object System.Text.StringBuilder 65536
+            foreach ($key in @($previous.Keys)) {
+                if (-not $next.ContainsKey($key)) {
+                    $cell=$previous[$key]
+                    [void]$batch.Append($esc+'['+([int]$cell[1]+1)+';'+([int]$cell[0]+1)+'H'+$esc+'[39m ')
+                }
+            }
+            foreach ($key in @($next.Keys)) {
+                $cell=$next[$key]
+                $old=$null
+                if ($previous.ContainsKey($key)) { $old=$previous[$key] }
+                if ($null -eq $old -or [string]$old[2] -cne [string]$cell[2] -or [string]$old[3] -cne [string]$cell[3]) {
+                    [void]$batch.Append($esc+'['+([int]$cell[1]+1)+';'+([int]$cell[0]+1)+'H'+$esc+'[38;2;'+[string]$cell[3]+'m'+[string]$cell[2])
+                }
+            }
+            if ($batch.Length -gt 0) { [Console]::Write($batch.ToString()+$esc+'[0m') }
+            $previous=$next
+
+            # The boot page may be timed; the farewell always allows ENTER/ESC.
+            # Checking the keyboard every frame keeps the animation responsive.
+            try {
+                if ([Console]::KeyAvailable) {
+                    $keyInfo=[Console]::ReadKey($true)
+                    if ($keyInfo.Key -eq [ConsoleKey]::Enter -or $keyInfo.Key -eq [ConsoleKey]::Escape) { break }
+                }
+            } catch { if ($WaitForEnter) { break } }
+            if (-not $WaitForEnter -and $clock.ElapsedMilliseconds -ge $DurationMilliseconds) { break }
+            Start-Sleep -Milliseconds 34
+        }
+    } catch {
+        # Decorative failures must not prevent entering the app or quitting.
+        if ($WaitForEnter) {
+            try { [Console]::ReadKey($true) | Out-Null } catch { }
+        }
+    } finally {
+        # No clearing here: the next screen clears on its own.
+        # Reset VT color, restore cursor to safe location, don't expose secrets.
+        try { [Console]::Write($esc+'[0m'+$esc+'['+($height-1)+';1H') } catch { }
+        $clock.Stop()
+    }
+}
+
+# OQG-BOOT-CIPHER-RAIN-V24
+# Synthetic armor typography ONLY. Never reads messages or private key material.
+$script:OqgV24CipherPool = $null
+$script:OqgV24CipherPosition = 0
+$script:OqgV24Transition = $null
+$script:OqgRainMenuRepaintV24 = $false
+
+function Get-OqgCipherPoolV24 {
+    if (-not [string]::IsNullOrEmpty([string]$script:OqgV24CipherPool)) {
+        return [string]$script:OqgV24CipherPool
+    }
+    # 1104 pseudorandom bytes, chosen only for a visual ASCII-armored sample.
+    # This is not an encrypted PGP message. No user message or key is accessed.
+    $bytes = New-Object 'byte[]' 1104
+    $provider = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
+    try { $provider.GetBytes($bytes) } finally { $provider.Dispose() }
+    $base64 = [Convert]::ToBase64String($bytes)
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    [void]$lines.Add('-----BEGIN PGP MESSAGE-----')
+    [void]$lines.Add('Version: OQG Visual Simulation')
+    [void]$lines.Add('')
+    for ($i=0; $i -lt $base64.Length; $i+=64) {
+        [void]$lines.Add($base64.Substring($i,[Math]::Min(64,$base64.Length-$i)))
+    }
+    [void]$lines.Add('-----END PGP MESSAGE-----')
+    # A terminal rain stream consumes characters, not line breaks.
+    $script:OqgV24CipherPool = ($lines -join '')
+    return [string]$script:OqgV24CipherPool
+}
+
+# Override only the decorative glyph provider used by the v22 menu renderer.
+# Stream seed becomes an offset into a looping, synthetic PGP armor block.
+function Get-OqgRainV22GlyphStrip {
+    param([int]$Seed,[int]$Length)
+    $pool=Get-OqgCipherPoolV24
+    $size=$pool.Length
+    $builder=New-Object System.Text.StringBuilder ([Math]::Max(1,$Length))
+    # Consume one deterministic continuous armored text stream across drops.
+    $start=[int]($script:OqgV24CipherPosition % $size)
+    for ($i=0; $i -lt $Length; $i++) {
+        [void]$builder.Append($pool[($start+$i)%$size])
+    }
+    $script:OqgV24CipherPosition=[int](($start+$Length)%$size)
+    return $builder.ToString()
+}
+
+function Start-OqgTransitionRainV24 {
+    param([ValidateSet('Boot','Exit')][string]$Mode='Boot',[int]$LogoRows=0,[int]$LogoWidth=0,[bool[]]$Foreground=$null)
+    $script:OqgV24Transition=$null
+    if (-not [bool]$script:OqgCodeRainEnabled) { return }
+    $w=0;$h=0
+    try { $w=[int][Console]::WindowWidth; $h=[int][Console]::WindowHeight } catch { return }
+    if ($w -lt 75 -or $h -lt 27) { return }
+    $rng=New-Object System.Random
+    $drops=New-Object System.Collections.ArrayList
+    $pool=Get-OqgCipherPoolV24
+    $top=1;$bottom=$h-2
+    $span=[Math]::Max(1,$bottom-$top)
+    # Roughly half the main menu's four lanes (two layers, one lane each).
+    for ($layer=0; $layer -lt 2; $layer++) {
+        $step=if ($layer -eq 0) { 4 } else { 5 }
+        $offset=if ($layer -eq 0) { 2 } else { 3 }
+        for ($x=$offset; $x -lt ($w-2); $x+=$step) {
+            $len=if ($layer -eq 0) { $rng.Next(13,24) } else { $rng.Next(9,20) }
+            $seed=$rng.Next(1,10000000)
+            [void]$drops.Add(@{
+                X=[int]$x; Head=[double]($top+$rng.NextDouble()*$span)
+                Rate=[double](13+$rng.NextDouble()*7+$layer)
+                Length=[int]$len; Seed=[int]$seed
+                Glyphs=(Get-OqgRainV22GlyphStrip -Seed $seed -Length $len)
+                Layer=[int]$layer
+            })
+        }
+    }
+    # OQG v36: carry the falling phases across the boot -> identity boundary.
+    # No console output and no retained user data; only decorative stream positions.
+    $carry=$script:OqgV36TransitionCarry
+    if ($null -ne $carry -and $carry.Width -eq $w -and $carry.Height -eq $h -and $null -ne $carry.Drops) {
+        $drops=New-Object System.Collections.ArrayList
+        foreach ($oldDrop in @($carry.Drops)) {
+            $copy=@{}
+            foreach ($property in @($oldDrop.Keys)) { $copy[$property]=$oldDrop[$property] }
+            $copy.Head=[double]$copy.Head + ([double]$copy.Rate * [Math]::Min(0.35,[Math]::Max(0.0,([DateTime]::UtcNow-$carry.When).TotalSeconds)))
+            [void]$drops.Add($copy)
+        }
+    }
+    $script:OqgV36TransitionCarry=$null
+    $state=@{
+        Mode=$Mode; Width=$w; Height=$h; Top=$top; Bottom=$bottom
+        LogoRows=$LogoRows; LogoWidth=$LogoWidth; Foreground=$Foreground
+        Drops=$drops; Rng=$rng; Previous=@{}
+        Clock=[System.Diagnostics.Stopwatch]::StartNew(); LastSeconds=0.0
+        LastPaintMilliseconds=-1000L
+    }
+    $script:OqgV24Transition=$state
+    # First frame is already populated. No spawn/build-up transition.
+    Update-OqgTransitionRainV24 -Force
+}
+
+function Test-OqgTransitionCellV24 {
+    param([int]$X,[int]$Y,$State)
+    if ($X -le 1 -or $X -ge ($State.Width-2) -or $Y -le 0 -or $Y -ge ($State.Height-2)) { return $false }
+    if ($State.Mode -eq 'Boot') {
+        # Keep the logo and metadata pristine, including during typing.
+        if ($Y -lt $State.LogoRows -and $X -lt ($State.LogoWidth+2)) { return $false }
+        if ($Y -ge $State.LogoRows -and $Y -lt ($State.LogoRows+18) -and $X -lt [Math]::Min($State.Width-2,120)) { return $false }
+    } else {
+        # Actual text mask is read once, before any rain glyphs are written.
+        if ($null -ne $State.Foreground) {
+            return [bool]$State.Foreground[($Y*$State.Width)+$X]
+        }
+        $left=[int][Math]::Max(0,[Math]::Floor(($State.Width-84)/2))
+        $top=[int][Math]::Max(2,[Math]::Floor($State.Height/2)-7)
+        if ($X -ge $left -and $X -le ($left+84) -and $Y -ge $top -and $Y -le ($top+15)) { return $false }
+    }
+    return $true
+}
+
+function Update-OqgTransitionRainV24 {
+    param([switch]$Force)
+    $s=$script:OqgV24Transition
+    if ($null -eq $s) { return }
+    $elapsed=$s.Clock.ElapsedMilliseconds
+    if (-not $Force -and ($elapsed-$s.LastPaintMilliseconds) -lt 24) { return }
+    $s.LastPaintMilliseconds=$elapsed
+    $now=[double]$s.Clock.Elapsed.TotalSeconds
+    $dt=[Math]::Min(0.12,[Math]::Max(0.0,$now-[double]$s.LastSeconds))
+    $s.LastSeconds=$now
+    $next=@{}
+    foreach ($d in $s.Drops) {
+        $d.Head=[double]$d.Head+([double]$d.Rate*$dt)
+        if ($d.Head -ge ($s.Bottom+$d.Length)) {
+            $d.Head=[double]($s.Top-1-$s.Rng.Next(0,4))
+            $d.Length=[int]$(if ($d.Layer -eq 0) { $s.Rng.Next(13,24) } else { $s.Rng.Next(9,20) })
+            $d.Rate=[double](13+$s.Rng.NextDouble()*7+$d.Layer)
+            $d.Seed=[int]$s.Rng.Next(1,10000000)
+            $d.Glyphs=Get-OqgRainV22GlyphStrip -Seed $d.Seed -Length $d.Length
+        }
+        $head=[int][Math]::Floor([double]$d.Head)
+        for ($t=0; $t -lt $d.Length; $t++) {
+            $x=[int]$d.X; $y=$head-$t
+            if ($y -lt $s.Top -or $y -ge $s.Bottom) { continue }
+            if ($s.Mode -eq 'Boot' -and $null -ne $s.Foreground) {
+                if (-not $s.Foreground[$y*$s.Width+$x]) { continue }
+            } elseif (-not (Test-OqgTransitionCellV24 -X $x -Y $y -State $s)) { continue }
+            $fade=1.0-($t/[double][Math]::Max(1,$d.Length-1))
+            if ($d.Layer -eq 0) {
+                $r=[int](2+22*$fade);$g=[int](17+105*$fade);$b=[int](37+118*$fade)
+                if ($t -eq 0) { $r=44;$g=160;$b=204 }
+            } else {
+                $r=[int](2+28*$fade);$g=[int](22+143*$fade);$b=[int](47+172*$fade)
+                if ($t -eq 0) { $r=145;$g=237;$b=255 }
+                elseif ($t -eq 1) { $r=56;$g=200;$b=244 }
+            }
+            $index=('{0},{1}' -f $x,$y)
+            $brightness=$g+$b
+            if (-not $next.ContainsKey($index) -or [int]$next[$index][4] -lt $brightness) {
+                $next[$index]=@($x,$y,([string]$d.Glyphs).Substring($t,1),('{0};{1};{2}' -f $r,$g,$b),$brightness)
+            }
+        }
+    }
+    $esc=[string][char]27
+    $batch=New-Object System.Text.StringBuilder 65536
+    foreach ($index in @($s.Previous.Keys)) {
+        if (-not $next.ContainsKey($index)) {
+            $old=$s.Previous[$index]
+            if (-not (Test-OqgTransitionCellV24 -X $old[0] -Y $old[1] -State $s)) { continue }
+            [void]$batch.Append($esc+'['+([int]$old[1]+1)+';'+([int]$old[0]+1)+'H'+$esc+'[39m ')
+        }
+    }
+    foreach ($index in @($next.Keys)) {
+        $cell=$next[$index];$old=$null
+        if ($s.Previous.ContainsKey($index)) { $old=$s.Previous[$index] }
+        if ($Force -or $null -eq $old -or [string]$old[2] -cne [string]$cell[2] -or [string]$old[3] -cne [string]$cell[3]) {
+            [void]$batch.Append($esc+'['+([int]$cell[1]+1)+';'+([int]$cell[0]+1)+'H'+$esc+'[38;2;'+[string]$cell[3]+'m'+[string]$cell[2])
+        }
+    }
+    if ($batch.Length -gt 0) {
+        # Save cursor position and restore colors/position in the same VT batch.
+        [Console]::Write($esc+'7'+$batch.ToString()+$esc+'[0m'+$esc+'8')
+    }
+    $s.Previous=$next
+}
+
+
+function Wait-OqgTransitionRainV24 {
+    param([ValidateSet('Boot','Exit')][string]$Mode='Boot',[int]$DurationMilliseconds=1400,[switch]$WaitForEnter)
+    if ($null -eq $script:OqgV24Transition) {
+        if ($WaitForEnter) {
+            while ($true) { $key=[Console]::ReadKey($true); if ($key.Key -eq 'Enter' -or $key.Key -eq 'Escape') { break } }
+        } elseif ($DurationMilliseconds -gt 0) { Start-Sleep -Milliseconds $DurationMilliseconds }
+        return
+    }
+    $clock=[System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        while ($true) {
+            Update-OqgTransitionRainV24
+            try {
+                if ([Console]::KeyAvailable) {
+                    $key=[Console]::ReadKey($true)
+                    if ($key.Key -eq 'Enter' -or $key.Key -eq 'Escape') { break }
+                }
+            } catch { if ($WaitForEnter) { break } }
+            if (-not $WaitForEnter -and $clock.ElapsedMilliseconds -ge $DurationMilliseconds) { break }
+            Start-Sleep -Milliseconds 30
+        }
+    } finally {
+        try { [Console]::Write([string][char]27+'[0m') } catch { }
+        if ($null -ne $script:OqgV24Transition) {
+            $script:OqgV36TransitionCarry=@{
+                Width=$script:OqgV24Transition.Width
+                Height=$script:OqgV24Transition.Height
+                Drops=$script:OqgV24Transition.Drops
+                When=[DateTime]::UtcNow
+            }
+        }
+        $script:OqgV24Transition=$null
+    }
+}
+
+# Retain the v23 public API for the existing dedicated goodbye screen.
+function Invoke-OqgTransitionRainV23 {
+    [CmdletBinding()]
+    param([ValidateSet('Boot','Exit')][string]$Mode,[int]$DurationMilliseconds=1400,[switch]$WaitForEnter)
+    # Capture existing farewell text BEFORE painting any rain glyphs.
+    $exitForeground=$null
+    if ($Mode -eq 'Exit') {
+        try {
+            $width=[int][Console]::WindowWidth;$height=[int][Console]::WindowHeight
+            $exitForeground=Get-OqgRainV22ForegroundMask -Width $width -Height $height -BodyTop 1 -FooterTop ($height-2)
+        } catch { }
+    }
+    Start-OqgTransitionRainV24 -Mode $Mode -Foreground $exitForeground
+    Wait-OqgTransitionRainV24 -Mode $Mode -DurationMilliseconds $DurationMilliseconds -WaitForEnter:$WaitForEnter
+}
+
+# Pre-create the synthetic armor text before the boot screen paints.
+try { [void](Get-OqgCipherPoolV24) } catch { }
+
+# OQG-STARTUP-RAIN-V25
+# Adapt the existing v24 transition engine to both startup stages.
+# Deliberately changes no cryptographic workflows and no saved menu preferences.
+
+
+# This is the final effective implementation, replacing only the short hold
+# originally installed by Identity-Hold. The already printed identity panel is
+# never cleared or rewritten.
+function Wait-OqgIdentityScreen {
+    param([ValidateRange(1,60)][int]$Seconds=10)
+    $promptY=-1
+    $priorCursor=$null
+    try { $priorCursor=[Console]::CursorVisible; [Console]::CursorVisible=$false } catch { }
+    try {
+        # The Enter used to dismiss the boot must not dismiss this screen.
+        try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { }
+        # V28: preseed transition before printing the countdown; no late buildup.
+        try { $promptY=[int][Console]::CursorTop + 1 } catch { $promptY=-1 }
+        # Begin after ALL identity foreground lines and the countdown prompt exist.
+        # A single console snapshot protects the actual glyph cells, not a rectangle.
+        try { Start-OqgIdentityRainV25 -CountdownRow $promptY } catch { }
+        Write-Host ''
+        try { $promptY=[int][Console]::CursorTop } catch { $promptY=-1 }
+        Write-OqgV35IdentityPrompt -Y $promptY -Remaining $Seconds
+        $deadline=[DateTime]::UtcNow.AddSeconds($Seconds)
+        $lastRemaining=-1
+        while ($true) {
+            $remaining=[int][Math]::Ceiling(($deadline-[DateTime]::UtcNow).TotalSeconds)
+            if ($remaining -le 0) { break }
+            if ($remaining -ne $lastRemaining) {
+                $lastRemaining=$remaining
+                # One writer, one foreground color, no 30 ms repaint flicker.
+                Write-OqgV35IdentityPrompt -Y $promptY -Remaining $remaining
+            }
+            try { Update-OqgTransitionRainV24 } catch { }
+            try {
+                if ([Console]::KeyAvailable) { [void][Console]::ReadKey($true); break }
+            } catch { }
+            Start-Sleep -Milliseconds 30
+        }
+    } finally {
+        # The following main-menu render clears the transition frame. Do not
+        # clear the terminal here, which would cause a black flash.
+        $script:OqgV24Transition=$null
+        try { if ($null -ne $priorCursor) { [Console]::CursorVisible=[bool]$priorCursor } } catch { }
+        Write-Host ''
+    }
+}
+
+# OQG-STARTUP-RAIN-V26
+# Retains animated boot rain across multiple boot waits; narrows protection.
+# Does not modify key handling, GnuPG, or main menu rain.
+
+
+function Wait-OqgTransitionRainV24 {
+    [CmdletBinding()]
+    param(
+        [ValidateSet('Boot','Exit')][string]$Mode='Boot',
+        [int]$DurationMilliseconds=1400,
+        [switch]$WaitForEnter
+    )
+    $state=$script:OqgV24Transition
+    if ($null -eq $state) {
+        if ($WaitForEnter) {
+            while ($true) {
+                $key=[Console]::ReadKey($true)
+                if ($key.Key -eq 'Enter' -or $key.Key -eq 'Escape') { break }
+            }
+        } elseif ($DurationMilliseconds -gt 0) {
+            Start-Sleep -Milliseconds $DurationMilliseconds
+        }
+        return
+    }
+    $clock=[System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        # Force restoration of drops that boot metadata may have overwritten.
+        Update-OqgTransitionRainV24 -Force
+        while ($true) {
+            Update-OqgTransitionRainV24
+            try {
+                if ([Console]::KeyAvailable) {
+                    $key=[Console]::ReadKey($true)
+                    if ($key.Key -eq 'Enter' -or $key.Key -eq 'Escape') { break }
+                }
+            } catch {
+                if ($WaitForEnter) { break }
+            }
+            if (-not $WaitForEnter -and $clock.ElapsedMilliseconds -ge $DurationMilliseconds) { break }
+            Start-Sleep -Milliseconds 25
+        }
+    } finally {
+        try { [Console]::Write(([string][char]27)+'[0m') } catch { }
+        # V24 unconditionally discarded the transition here. Boot can call
+        # this wait more than once; keep its drops alive until the next screen
+        # is drawn. The identity screen starts a fresh transition itself.
+        if ($Mode -ne 'Boot') { $script:OqgV24Transition=$null }
+    }
+}
+
+
+function Get-OqgStartupRainStatusV26 {
+    $state=$script:OqgV24Transition
+    if ($null -eq $state) { return 'Startup rain state: absent' }
+    $mode=[string]$state.Mode
+    $count=0
+    try { $count=@($state.Drops).Count } catch { }
+    return ('Startup rain state: {0}; streams: {1}; size: {2}x{3}' -f $mode,$count,$state.Width,$state.Height)
+}
+
+# OQG-STARTUP-RAIN-V27
+# Phase-local decorative rain and controlled typewriter rendering.
+# This file does not read key material, stored messages, or passphrases.
+
+
+# The existing countdown uses an already drawn foreground panel and calls
+# Start-OqgIdentityRainV25 immediately before its countdown loop.
+
+
+# OQG-INTEGRATED-STARTUP-V28
+# Renders the original SGR logo during live boot rain. No cryptographic I/O.
+
+
+# OQG-RENDER-INTEGRATED-V31
+# Foreground-aware boot + identity rain. Synthetic glyphs only.
+# This script is injected before the application entrypoint. It changes UI only.
+
+function Start-OqgV31BootRain {
+    param([int]$LogoRows=21,[int]$LogoWidth=130)
+    $w=0;$h=0
+    try { $w=[int][Console]::WindowWidth; $h=[int][Console]::WindowHeight } catch { return }
+    if ($w -lt 75 -or $h -lt 27) { return }
+    $mask=New-Object 'System.Boolean[]' ($w*$h)
+    for($y=1;$y -lt ($h-2);$y++) {
+        for($x=2;$x -lt ($w-2);$x++) { $mask[$y*$w+$x]=$true }
+    }
+    $script:OqgV31BootGlyphs=New-Object 'System.Collections.Generic.HashSet[string]'
+    $prior=[bool]$script:OqgCodeRainEnabled
+    try {
+        $script:OqgCodeRainEnabled=$true
+        # Exit mode accepts an exact foreground mask and never reserves a logo rectangle.
+        Start-OqgTransitionRainV24 -Mode Exit -Foreground $mask
+        $script:OqgV31BootActive=$true
+    } finally { $script:OqgCodeRainEnabled=$prior }
+}
+
+
+function Write-OqgV31LogoLine {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Text='',[int]$Burst,$Pacing)
+    if ($null -eq $Text) { $Text='' }
+    $esc=[string][char]27
+    $tokens=[regex]::Matches($Text,([regex]::Escape($esc)+'\[[0-9;]*m|[\s\S]'))
+    $originX=0;$originY=0
+    try { $originX=[int][Console]::CursorLeft;$originY=[int][Console]::CursorTop } catch { }
+    $screenY=$originY-[Console]::WindowTop
+    $x=$originX;$style=$esc+'[0m';$rowInk=0;$inRun=$false
+    $buffer=New-Object System.Text.StringBuilder 4096
+
+    foreach($token in $tokens) {
+        $char=[string]$token.Value
+        if ($char.StartsWith($esc+'[')) {
+            $style=$char
+            if ($inRun) { [void]$buffer.Append($char) }
+            continue
+        }
+        if ($char -ne ' ' -and $char -ne "`r" -and $char -ne "`n") {
+            if (-not $inRun) {
+                [void]$buffer.Append($esc+'['+($screenY+1)+';'+($x+1)+'H'+$style)
+                $inRun=$true
+            }
+            [void]$buffer.Append($char)
+            $rowInk++
+            $Pacing.Drawn++
+            $state=$script:OqgV24Transition
+            if ($null -ne $state -and $x -lt $state.Width -and $screenY -ge 0 -and $screenY -lt $state.Height) {
+                $state.Foreground[$screenY*$state.Width+$x]=$false
+                [void]$state.Previous.Remove(('{0},{1}' -f $x,$screenY))
+            }
+        } else { $inRun=$false }
+        $x++
+        if ($buffer.Length -gt 0 -and ($rowInk -ge $Burst -or ($rowInk -gt 0 -and $x -eq ($originX+$Pacing.LastInkColumn)))) {
+            $due = 2500.0 * [Math]::Max(0,$Pacing.Drawn-$Pacing.First) / [Math]::Max(1,$Pacing.Total-$Pacing.First)
+            while (($left=$due-$Pacing.Clock.Elapsed.TotalMilliseconds) -gt 0) {
+                if ($left -gt 30) { Update-OqgTransitionRainV24 }
+                $left=$due-$Pacing.Clock.Elapsed.TotalMilliseconds
+                if ($left -gt 0) { [Threading.Thread]::Sleep([int][Math]::Min(16,[Math]::Ceiling($left))) }
+            }
+            [Console]::Write($buffer.ToString())
+            [void]$buffer.Clear()
+            $inRun=$false
+            $rowInk=0
+        }
+    }
+    if ($buffer.Length -gt 0) { [Console]::Write($buffer.ToString()) }
+    [Console]::Write($esc+'[0m')
+    try { [Console]::SetCursorPosition($originX,[Math]::Min([Console]::WindowHeight-2,$originY+1)) }
+    catch { [Console]::Write([Environment]::NewLine) }
+    Update-OqgTransitionRainV24
+}
+
+function Start-OqgIdentityRainV25 {
+    [CmdletBinding()]
+    param([int]$CountdownRow=16)
+    $w=0;$h=0
+    try { $w=[int][Console]::WindowWidth;$h=[int][Console]::WindowHeight } catch { return }
+    if ($w -lt 75 -or $h -lt 27) { return }
+    # Identity foreground is already painted. Read its actual occupied cells
+    # instead of excluding the first 100 columns across the upper screen.
+    $mask=$null
+    try { $mask=Get-OqgRainV22ForegroundMask -Width $w -Height $h -BodyTop 1 -FooterTop ($h-2) } catch { }
+    if ($null -eq $mask) {
+        $mask=New-Object 'System.Boolean[]' ($w*$h)
+        for($y=1;$y -lt ($h-2);$y++) {
+            for($x=2;$x -lt ($w-2);$x++) { $mask[$y*$w+$x]=$true }
+        }
+        # Conservative fallback: protect only the known line rows, not blocks.
+        foreach ($y in @(1,2,3,4,5,6,7,8,9,10,11,12,13,14,$CountdownRow)) {
+            if ($y -ge 1 -and $y -lt ($h-2)) {
+                $limit=if ($y -eq $CountdownRow) { 72 } else { 52 }
+                for($x=2;$x -lt [Math]::Min($limit,$w-2);$x++) { $mask[$y*$w+$x]=$false }
+            }
+        }
+    }
+    # V34: the countdown is always foreground, including spaces between words.
+    # Console foreground snapshots protect printed glyphs, not whitespace;
+    # do not allow decorative rain to occupy any part of this live line.
+    if ($CountdownRow -ge 0 -and $CountdownRow -lt $h) {
+        $lastX=[Math]::Min($w-2,104)
+        for ($x=0;$x -le $lastX;$x++) { $mask[($CountdownRow*$w)+$x]=$false }
+    }
+    $old=[bool]$script:OqgCodeRainEnabled
+    try {
+        $script:OqgCodeRainEnabled=$true
+        Start-OqgTransitionRainV24 -Mode Exit -Foreground $mask
+    } finally { $script:OqgCodeRainEnabled=$old }
+}
+
+function Show-StartupBootScreenV51 {
+    Clear-Host
+    try { [void](Get-OqgRainV22ForegroundMask -Width 1 -Height 1 -BodyTop 0 -FooterTop 0) } catch { }
+    Clear-PendingConsoleInputV56
+    $screenWidth=Get-V57WindowWidth
+    $maxWidth=[Math]::Max(70,[Math]::Min(138,$screenWidth-1))
+    $hero=@(Get-OqgSafeMainLogo)
+    $heroWidth=0
+    foreach($line in $hero) {
+        $plain=[regex]::Replace([string]$line,([regex]::Escape([string][char]27)+'\[[0-9;]*m'),'')
+        $heroWidth=[Math]::Max($heroWidth,$plain.Length)
+    }
+    $showHero=$false
+    try { $showHero=($hero.Count -ge 3 -and [Console]::WindowWidth -gt ($heroWidth+2) -and [Console]::WindowHeight -ge ($hero.Count+19)) } catch { }
+    $logo=if ($showHero) { @($hero) } else { @(Get-BootLogoLinesV65) }
+    $logoWidth=if ($showHero) { $heroWidth } else { $maxWidth }
+    # Start with streams already falling, before drawing the first logo glyph.
+    Start-OqgV31BootRain -LogoRows $logo.Count -LogoWidth $logoWidth
+    $rows=@(foreach ($raw in $logo) {
+        $line=if ($showHero) { [string]$raw } else { Clip-AsciiLineV67 -Text ([string]$raw) -Width $maxWidth }
+        $plain=[regex]::Replace($line,([string][char]27+'\[[0-9;]*m'),'')
+        $ink=[regex]::Replace($plain,'[ \r\n]','').Length
+        [pscustomobject]@{Text=$line; Ink=$ink; LastInkColumn=$plain.TrimEnd([char[]]" `r`n").Length}
+    })
+    $total=0
+    $first=0
+    foreach ($row in $rows) {
+        $total+=$row.Ink
+        if ($first -eq 0) { $first=[Math]::Min(10,$row.Ink) }
+    }
+    $burst=[Math]::Min(10,[Math]::Max(1,$total-1))
+    $logoPacing=@{Clock=[Diagnostics.Stopwatch]::StartNew(); Drawn=0; Total=$total; First=[Math]::Min($burst,$first); LastInkColumn=0}
+    foreach ($row in $rows) {
+        $logoPacing.LastInkColumn=$row.LastInkColumn
+        Write-OqgV31LogoLine -Text $row.Text -Burst $burst -Pacing $logoPacing
+    }
+    Write-Host ''
+    $boxWidth=[Math]::Max(78,[Math]::Min(114,$screenWidth-4))
+    $rule='─'*($boxWidth-4)
+    Write-Host ('  ┌{0}┐' -f $rule) -ForegroundColor $script:UiBorderBlue
+    Write-BootMenuBoxLineV67 -Label 'BOOT MENU' -Value ([string]$script:BootMenuTitle) -Width $boxWidth -Highlight
+    Write-BootMenuBoxLineV67 -Label 'Operator' -Value ([string]$script:BootMenuSubtitle) -Width $boxWidth
+    Write-BootMenuBoxLineV67 -Label 'Build' -Value ([string]$script:ToolVersion) -Width $boxWidth -Highlight
+    Write-BootMenuBoxLineV67 -Label 'Config' -Value (Format-DisplayPath (Get-ConfigPathV63)) -Width $boxWidth
+    Write-BootMenuBoxLineV67 -Label 'PGP folder' -Value (Format-DisplayPath $script:DefaultStartFolder) -Width $boxWidth
+    Write-BootMenuBoxLineV67 -Label 'Output folder' -Value (Format-DisplayPath (Get-OutputFolderV63)) -Width $boxWidth
+    Write-BootMenuBoxLineV67 -Label 'Key profile' -Value ([string]$script:DefaultKeyProfile) -Width $boxWidth -Highlight
+    $bottomBorder='  └{0}┘' -f $rule
+    Set-OqgV41BootForeground -Row ([Console]::CursorTop-[Console]::WindowTop) -Text $bottomBorder
+    Write-Host $bottomBorder -ForegroundColor $script:UiBorderBlue
+    Write-Host ''
+    Update-OqgTransitionRainV24
+    $progressRow=0
+    try { $progressRow=[Console]::CursorTop } catch { }
+    foreach($p in @(0,12,25,37,51,66,78,90,100)) {
+        Clear-PendingConsoleInputV56
+        Write-BootProgressAtV57 -Row $progressRow -Percent $p -Label (Get-BootStageLabelV56 -Percent $p)
+
+
+        Update-OqgTransitionRainV24
+        $hold = [Diagnostics.Stopwatch]::StartNew()
+        while ($hold.ElapsedMilliseconds -lt 520) {
+            Start-Sleep -Milliseconds 35
+            Update-OqgTransitionRainV24
+        }
+    }
+    Write-BootProgressAtV57 -Row $progressRow -Percent 100 -Label 'ready'
+
+
+    try { [Console]::SetCursorPosition(0,$progressRow+2) } catch { Write-Host '' }
+    Write-GradientFixedLineV56 -Text '  Boot complete. Press ENTER to continue to identity selection.' -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold
+
+    Update-OqgTransitionRainV24
+    if ([bool]$script:BootWaitForEnter) {
+        Wait-OqgTransitionRainV24 -Mode Boot -WaitForEnter
+    } else {
+        Wait-OqgTransitionRainV24 -Mode Boot -DurationMilliseconds 900
+    }
+    $state=$script:OqgV24Transition
+    if ($null -ne $state) {
+        $script:OqgV36TransitionCarry=@{Width=$state.Width;Height=$state.Height;Drops=$state.Drops;When=[DateTime]::UtcNow}
+    }
+    $script:OqgV31BootActive=$false
+}
+
+# OQG-STARTUP-V32
+# UI only: draw identity rain as soon as the identity banner exists.
+# Uses the same synthetic transition-rain engine as v31; never reads key material.
+$script:OqgV32IdentityRainEarly = $false
+
+function Sync-OqgV32IdentityForeground {
+    [CmdletBinding()]
+    param([int]$ThroughRow = 24)
+    $s = $script:OqgV24Transition
+    if ($null -eq $s -or $null -eq $s.Foreground) { return }
+    if (-not ('OqgRainNativeV22' -as [type])) { return }
+    try {
+        $w = [int]$s.Width
+        $h = [int]$s.Height
+        $handle = [OqgRainNativeV22]::GetStdHandle(-11)
+        $left = [int][Console]::WindowLeft
+        $top = [int][Console]::WindowTop
+        $lastRow = [Math]::Min($h-3, [Math]::Max(1,$ThroughRow))
+        for ($y=1; $y -le $lastRow; $y++) {
+            $line = New-Object System.Text.StringBuilder ($w+2)
+            $read = 0
+            $pos = New-Object -TypeName OqgRainNativeV22+Coord -ArgumentList @([int16]$left,[int16]($top+$y))
+            if (-not [OqgRainNativeV22]::ReadChars($handle,$line,$w,$pos,[ref]$read) -or $read -lt $w) { continue }
+            $chars = $line.ToString()
+            for ($x=2; $x -lt ($w-2); $x++) {
+                $index = $y*$w+$x
+                $key = '{0},{1}' -f $x,$y
+                $ch = [string]$chars[$x]
+                $rain = $false
+                if ($s.Previous.ContainsKey($key)) {
+                    $rain = ($ch -ceq [string]$s.Previous[$key][2])
+                }
+                if ($ch -eq ' ' -or $ch -eq [string][char]0 -or $rain) {
+                    $s.Foreground[$index] = $true
+                } else {
+                    $s.Foreground[$index] = $false
+                    if ($s.Previous.ContainsKey($key)) { $s.Previous.Remove($key) }
+                }
+            }
+        }
+    } catch {
+        # Never let optional artwork animation interrupt identity initialization.
+    }
+}
+
+function Start-OqgV32IdentityRainEarly {
+    [CmdletBinding()]
+    param()
+    $w=0; $h=0
+    try { $w=[int][Console]::WindowWidth; $h=[int][Console]::WindowHeight } catch { return }
+    if ($w -lt 75 -or $h -lt 27) { return }
+    if ([bool]$script:OqgV32IdentityRainEarly -and $null -ne $script:OqgV24Transition) { return }
+    $mask = New-Object 'System.Boolean[]' ($w*$h)
+    for ($y=1; $y -lt ($h-2); $y++) {
+        for ($x=2; $x -lt ($w-2); $x++) { $mask[$y*$w+$x]=$true }
+    }
+    # Protect visible banner characters before the first frame, not its whole rectangle.
+    $sampled = $false
+    if ('OqgRainNativeV22' -as [type]) {
+        try {
+            $handle=[OqgRainNativeV22]::GetStdHandle(-11)
+            $left=[int][Console]::WindowLeft
+            $top=[int][Console]::WindowTop
+            for ($y=1; $y -le [Math]::Min(12,$h-3); $y++) {
+                $line=New-Object System.Text.StringBuilder ($w+2)
+                $read=0
+                $pos=New-Object -TypeName OqgRainNativeV22+Coord -ArgumentList @([int16]$left,[int16]($top+$y))
+                if (-not [OqgRainNativeV22]::ReadChars($handle,$line,$w,$pos,[ref]$read) -or $read -lt $w) { throw 'Foreground sampling unavailable.' }
+                $characters=$line.ToString()
+                for ($x=2; $x -lt ($w-2); $x++) {
+                    if ($characters[$x] -ne ' ' -and $characters[$x] -ne [char]0) { $mask[$y*$w+$x]=$false }
+                }
+            }
+            $sampled=$true
+        } catch { $sampled=$false }
+    }
+    if (-not $sampled) {
+        # Safe fallback only when buffer capture is unavailable.
+        for ($y=1; $y -le [Math]::Min(9,$h-3); $y++) {
+            for ($x=2; $x -lt [Math]::Min(76,$w-2); $x++) { $mask[$y*$w+$x]=$false }
+        }
+    }
+    $old=[bool]$script:OqgCodeRainEnabled
+    try {
+        $script:OqgCodeRainEnabled=$true
+        Start-OqgTransitionRainV24 -Mode Exit -Foreground $mask
+        $script:OqgV32IdentityRainEarly=($null -ne $script:OqgV24Transition)
+    } finally { $script:OqgCodeRainEnabled=$old }
+}
+
+# OQG-RAIN-NMS-INDEPENDENCE-V33
+$script:V33ChromeTick = 0
+# OQG-MENU-NMS-IDENTITY-ISOLATION-V34
+$script:V34MenuTick = 0
+
+# OQG-NMS-FOREGROUND-V35
+# Console-only decoration. Does not touch crypto, files, keys, or state outside UI.
+# Ink-only VT writes preserve the ambient rain between visible characters.
+function Add-OqgV35InkLine {
+    param(
+        [System.Text.StringBuilder]$Buffer,
+        [int]$X,[int]$Y,[int]$MaxWidth,
+        [string]$Text,
+        [string]$Rgb='155;205;250'
+    )
+    if ($MaxWidth -le 0 -or $Y -lt 0 -or [string]::IsNullOrEmpty($Text)) { return }
+    $max=[Math]::Min($MaxWidth,$Text.Length)
+    $esc=[string][char]27
+    # Only emit nonspace text. No padding, no opaque rows, no black rectangles.
+    $i=0
+    while ($i -lt $max) {
+        while ($i -lt $max -and [char]::IsWhiteSpace($Text[$i])) { $i++ }
+        if ($i -ge $max) { break }
+        $start=$i
+        while ($i -lt $max -and -not [char]::IsWhiteSpace($Text[$i])) { $i++ }
+        $run=$Text.Substring($start,$i-$start)
+        [void]$Buffer.Append($esc+'['+($Y+1)+';'+($X+$start+1)+'H'+$esc+'[38;2;'+$Rgb+'m'+$run)
+    }
+}
+
+function Write-OqgV35MenuForeground {
+    param(
+        [int]$LeftWidth,[int]$LeftTop,[string[]]$LeftRows,
+        [int]$ActionX,[int]$ActionWidth,[int]$BodyTop,
+        [int]$PageStart,[int]$PageEnd,[int]$SelectedIndex,[int]$Step,
+        [object[]]$Items,
+        [int]$DashX,[int]$DashWidth,[int]$DashDetailY,[string[]]$DetailLines,
+        [int]$DashTelemetryY,[string[]]$TelemetryLines,
+        [int]$DashNmsY,[string[]]$NmsLines,[int]$FooterTop
+    )
+    if (-not [bool]$script:LiveNmsMenuEnabled) { return }
+    $esc=[string][char]27
+    $buff=New-Object System.Text.StringBuilder 32768
+    $oldX=0;$oldY=0
+    try { $oldX=[int][Console]::CursorLeft; $oldY=[int][Console]::CursorTop } catch {}
+    # LEFT: sections and descriptions animate; keys, policy and profile values are stable.
+    for ($i=0;$i -lt $LeftRows.Count;$i++) {
+        $yy=$LeftTop+$i
+        if ($yy -ge $FooterTop) { break }
+        $raw=[string]$LeftRows[$i]
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+        $decorative=($raw -match '^\s*(IDENTITY / SESSION|CRYPTOGRAPHIC PROFILE|CONSOLE|Controls\s*:|Shortcuts\s*:|Global NMS|while selected|fully readable)')
+        $shown=if ($decorative) { Get-OqgSafeNmsText -Text $raw -Reveal 0.956 -Seed (900+$i*11) } else { $raw }
+        Add-OqgV35InkLine -Buffer $buff -X 0 -Y $yy -MaxWidth ($LeftWidth-2) -Text $shown -Rgb $(if ($decorative) { '109;188;244' } else { '174;198;222' })
+    }
+    # CENTER: active selection is owned by its gradient painter; only other actions shift.
+    for ($j=$PageStart;$j -lt $PageEnd;$j++) {
+        if ($j -eq $SelectedIndex) { continue }
+        $yy=$BodyTop+2+(($j-$PageStart)*$Step)
+        if (($yy+1) -ge $FooterTop) { break }
+        $item=$Items[$j]
+        $cat=Get-OqgMenuCategory -Label ([string]$item.Label)
+        $raw=('    · {0,-7} · {1}  [{2}]' -f ('['+$cat+']'),[string]$item.Label,[string]$item.Shortcut)
+        $row=Get-OqgSafeNmsText -Text $raw -Reveal 0.946 -Seed (100+$j*17)
+        $hint=Get-OqgSafeNmsText -Text ('       '+[string]$item.Hint) -Reveal 0.975 -Seed (271+$j*23)
+        Add-OqgV35InkLine -Buffer $buff -X $ActionX -Y $yy -MaxWidth ($ActionWidth-2) -Text $row -Rgb '139;196;241'
+        Add-OqgV35InkLine -Buffer $buff -X $ActionX -Y ($yy+1) -MaxWidth ($ActionWidth-2) -Text $hint -Rgb '113;151;191'
+    }
+    # RIGHT: metadata and security-relevant values are stable; ambient NMS is on channel text.
+    $zones=@(
+        @{Y=$DashDetailY;Lines=$DetailLines;Mutate=$false},
+        @{Y=$DashTelemetryY;Lines=$TelemetryLines;Mutate=$false},
+        @{Y=$DashNmsY;Lines=$NmsLines;Mutate=$true}
+    )
+    foreach ($zone in $zones) {
+        $arr=@($zone.Lines)
+        for ($i=0;$i -lt $arr.Count;$i++) {
+            $yy=[int]$zone.Y+$i
+            if ($yy -ge $FooterTop) { break }
+            if ($yy -lt $BodyTop) { continue }
+            $raw=[string]$arr[$i]
+            if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+            # Channel lines already use the original NMS generator; repaint its new frame only.
+            $shown=if ([bool]$zone.Mutate -and $i -gt 1) { Get-OqgSafeNmsText -Text $raw -Reveal 0.92 -Seed (600+$i*23) } else { $raw }
+            Add-OqgV35InkLine -Buffer $buff -X $DashX -Y $yy -MaxWidth ($DashWidth-2) -Text $shown -Rgb $(if ([bool]$zone.Mutate) { '115;198;248' } else { '180;198;218' })
+        }
+    }
+    if ($buff.Length -gt 0) {
+        # Always restore cursor and styling. Single console write; no Clear-Host.
+        [void]$buff.Append($esc+'[0m'+$esc+'['+($oldY+1)+';'+($oldX+1)+'H')
+        [Console]::Write($buff.ToString())
+    }
+}
+
+function Write-OqgV35IdentityPrompt {
+    param([int]$Y,[int]$Remaining)
+    if ($Y -lt 0) { return }
+    $oldFg=$null;$oldX=0;$oldY=0
+    try {
+        $oldX=[Console]::CursorLeft;$oldY=[Console]::CursorTop
+        $oldFg=[Console]::ForegroundColor
+        [Console]::ForegroundColor=[ConsoleColor]::Cyan
+        [Console]::SetCursorPosition(0,$Y)
+        [Console]::Write(('  Identity ready. Press ANY KEY to continue. Auto in {0,2}s   ' -f $Remaining))
+    } finally {
+        try { if ($null -ne $oldFg) { [Console]::ForegroundColor=$oldFg } } catch {}
+        try { [Console]::SetCursorPosition($oldX,$oldY) } catch {}
+    }
+}
+
+# OQG-RAIN-SURFACE-V36
+# UI-only: invalidate cached rain cells beneath an updated boot progress line.
+# No keys, profiles, GnuPG commands, configuration or user files are accessed.
+$script:OqgV36TransitionCarry=$null
+
+# OQG-PROGRESS-NMS-V37
+# Presentation-only overrides. Keep rain behind visible progress glyphs.
+$script:OqgV37ProgressEndX = 0
+function Protect-OqgV37ProgressRow {
+    param([int]$Y)
+    $s = $script:OqgV24Transition
+    if ($null -eq $s -or $null -eq $s.Foreground) { return }
+    if ($Y -lt 1 -or $Y -ge ($s.Height - 2)) { return }
+    $end = [Math]::Min($s.Width - 2,[Math]::Max(0,[int]$script:OqgV37ProgressEndX))
+    for ($x=0; $x -lt $end; $x++) {
+        $s.Foreground[($Y * $s.Width) + $x] = $false
+        $key = ('{0},{1}' -f $x,$Y)
+        if ($null -ne $s.Previous -and $s.Previous.ContainsKey($key)) {
+            [void]$s.Previous.Remove($key)
+        }
+    }
+}
+
+function Write-BootProgressAtV57 {
+    param([int]$Row,[int]$Percent,[string]$Label)
+    $width = [Math]::Min((Get-V57WindowWidth) - 1,132)
+    if ($width -lt 80) { $width = [Math]::Max(60,$width) }
+    $segments = @()
+    $segments += @(New-GradientSegments -Text ('  {0}' -f (Fit-V57 -Text $Label -Width 30)) -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold)
+    $segments += (New-ConsoleSegment -Text ' ' -Color $script:UiDimSilver)
+    $cells = [Math]::Max(18,[Math]::Min(54,$width - 45))
+    $segments += @(New-ProgressBarSegmentsV54 -Percent $Percent -Cells $cells)
+    $used = 0
+    foreach ($seg in @($segments)) {
+        if ($null -ne $seg) { $used += ([string]$seg.Text).Length }
+    }
+    $used = [Math]::Max(1,[Math]::Min($width,$used))
+    $script:OqgV37ProgressEndX = [Math]::Min($width,$used + 2)
+    $oldX=0;$oldY=0
+    try { $oldX=[Console]::CursorLeft; $oldY=[Console]::CursorTop } catch { }
+    try {
+        [Console]::SetCursorPosition(0,$Row)
+        Write-SegmentsNoNewlineV57 -Segments $segments -Width $used
+        # Two quiet cells separate the meter from decorative falling ciphertext.
+        [Console]::Write('  ')
+    } finally {
+        try { [Console]::SetCursorPosition($oldX,$oldY) } catch { }
+    }
+    Protect-OqgV37ProgressRow -Y $Row
+}
+
+# Greater, continuously evolving NMS on decorative surfaces only.
+# Nondecorative data and the selected action are protected by the v35 caller.
+function Get-OqgSafeNmsText {
+    param([string]$Text,[double]$Reveal=0.90,[int]$Seed=17)
+    if (-not [bool]$script:LiveNmsMenuEnabled) { return $Text }
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+    try {
+        $chaosReveal = [Math]::Max(0.60,[Math]::Min(0.77,($Reveal - 0.17)))
+        return (Convert-ToNmsSentenceV62 -Text $Text -Seed $Seed -Reveal $chaosReveal)
+    } catch { return $Text }
+}
+
+
+# OQG-BOOT-COPY-GUARD-V38.1
+# Safely wraps the existing renderers without replacing their function AST extents.
+# This is decoration protection only. No GnuPG/key/CLI behavior changes.
+$script:OqgV381ProgressRow = -1
+$script:OqgV381ProgressEndX = 0
+$script:OqgV381SentenceActive = $false
+$script:OqgV381SentenceWidth = '  Boot complete. Press ENTER to continue to identity selection.'.Length
+
+$script:OqgV381OriginalCellTest = (Get-Command Test-OqgTransitionCellV24 -CommandType Function).ScriptBlock
+$script:OqgV381OriginalProgress = (Get-Command Write-BootProgressAtV57 -CommandType Function).ScriptBlock
+$script:OqgV381OriginalGradientLine = (Get-Command Write-GradientFixedLineV56 -CommandType Function).ScriptBlock
+
+function Protect-OqgV381Region {
+    param([int]$Row,[int]$StartX,[int]$EndX)
+    $s = $script:OqgV24Transition
+    if ($null -eq $s -or [string]$s.Mode -ne 'Boot') { return }
+    if ($Row -le 0 -or $Row -ge ([int]$s.Height-2)) { return }
+    $start = [Math]::Max(0,$StartX)
+    $end = [Math]::Min(([int]$s.Width-2),$EndX)
+    if ($end -le $start) { return }
+    for ($x=$start;$x -lt $end;$x++) {
+        if ($null -ne $s.Foreground -and ($Row*[int]$s.Width+$x) -lt $s.Foreground.Length) {
+            $s.Foreground[($Row*[int]$s.Width)+$x] = $false
+        }
+        $k = '{0},{1}' -f $x,$Row
+        if ($null -ne $s.Previous -and $s.Previous.ContainsKey($k)) {
+            [void]$s.Previous.Remove($k)
+        }
+    }
+}
+
+function Test-OqgTransitionCellV24 {
+    param([int]$X,[int]$Y,$State)
+    if ($null -ne $State -and [string]$State.Mode -eq 'Boot' -and [int]$script:OqgV381ProgressRow -ge 0) {
+        if ($Y -eq [int]$script:OqgV381ProgressRow -and $X -ge 0 -and $X -lt [int]$script:OqgV381ProgressEndX) {
+            return $false
+        }
+        if ([bool]$script:OqgV381SentenceActive -and
+            $Y -eq ([int]$script:OqgV381ProgressRow+2) -and
+            $X -ge 0 -and $X -lt [int]$script:OqgV381SentenceWidth) {
+            return $false
+        }
+    }
+    return [bool](& $script:OqgV381OriginalCellTest -X $X -Y $Y -State $State)
+}
+
+function Write-BootProgressAtV57 {
+    param([int]$Row,[int]$Percent,[string]$Label)
+    # A new boot resets the sentence guard. The original progress renderer is retained.
+    if ([int]$script:OqgV381ProgressRow -ne $Row) {
+        $script:OqgV381SentenceActive = $false
+    }
+    $script:OqgV381ProgressRow = $Row
+    & $script:OqgV381OriginalProgress -Row $Row -Percent $Percent -Label $Label
+    $end = [int]$script:OqgV37ProgressEndX
+    if ($end -le 0) { throw 'v37 progress width was not initialized; refusing to guess boot text bounds.' }
+    $script:OqgV381ProgressEndX = $end
+    Protect-OqgV381Region -Row $Row -StartX 0 -EndX $end
+}
+
+function Write-GradientFixedLineV56 {
+    param(
+        [AllowEmptyString()][string]$Text = '',
+        [object[]]$StartRgb = $script:GradientBlueStart,
+        [object[]]$EndRgb = $script:GradientBlueEnd,
+        [switch]$Bold
+    )
+    if ($Text -ceq '  Boot complete. Press ENTER to continue to identity selection.' -and
+        [int]$script:OqgV381ProgressRow -ge 0 -and
+        $null -ne $script:OqgV24Transition -and
+        [string]$script:OqgV24Transition.Mode -eq 'Boot') {
+        $script:OqgV381SentenceActive = $true
+        $script:OqgV381SentenceWidth = $Text.Length
+        Protect-OqgV381Region -Row ([int]$script:OqgV381ProgressRow+2) -StartX 0 -EndX $Text.Length
+    }
+    & $script:OqgV381OriginalGradientLine -Text $Text -StartRgb $StartRgb -EndRgb $EndRgb -Bold:$Bold
+}
+
+
+# OQG-STABLE-BOOT-FOREGROUND-V39
+# Inserted after v38.1 wrappers, before the app entry point.
+# This patch only alters the boot foreground drawing order.
+$script:OqgV39PreviousProgressWriter = (Get-Command Write-BootProgressAtV57 -CommandType Function).ScriptBlock
+$script:OqgV39PreviousGradientWriter = (Get-Command Write-GradientFixedLineV56 -CommandType Function).ScriptBlock
+
+function Clear-OqgV39BootTextSpan {
+    param([int]$Row,[int]$EndX)
+    $s = $script:OqgV24Transition
+    if ($null -eq $s -or [string]$s.Mode -ne 'Boot') { return }
+    if ($Row -lt 1 -or $Row -ge ([int]$s.Height-2)) { return }
+    $end = [Math]::Min([int]$s.Width-2,[Math]::Max(0,$EndX))
+    if ($end -le 0) { return }
+
+    # 1. Disallow rain in the ENTIRE text span BEFORE its next paint.
+    # 2. Evict existing rain history there BEFORE restoring the foreground.
+    # 3. Clear prior glyphs ONCE during the foreground paint (not every rain frame).
+    for ($x=0;$x -lt $end;$x++) {
+        if ($null -ne $s.Foreground -and $s.Foreground.Length -eq ([int]$s.Width*[int]$s.Height)) {
+            $s.Foreground[($Row*[int]$s.Width)+$x]=$false
+        }
+        $key=('{0},{1}' -f $x,$Row)
+        if ($null -ne $s.Previous -and $s.Previous.ContainsKey($key)) {
+            [void]$s.Previous.Remove($key)
+        }
+    }
+    $esc = [string][char]27
+    $oldX=0;$oldY=0
+    try {
+        $oldX=[int][Console]::CursorLeft
+        $oldY=[int][Console]::CursorTop
+        # VT position + clean background + restore cursor as one write.
+        [Console]::Write($esc+'['+($Row+1)+';1H'+$esc+'[0m'+(' '*$end)+$esc+'['+($oldY+1)+';'+($oldX+1)+'H')
+    } catch { }
+}
+
+function Write-BootProgressAtV57 {
+    param([int]$Row,[int]$Percent,[string]$Label)
+    # Width comes from the actual v37 formula, not the full terminal width.
+    $width=[Math]::Min((Get-V57WindowWidth)-1,132)
+    if ($width -lt 80) { $width=[Math]::Max(60,$width) }
+    $cells=[Math]::Max(18,[Math]::Min(54,$width-45))
+    # 2 spaces + 30-column label, 1 gap, bar, percentage, and safety margin.
+    $end=[Math]::Min($width,33 + $cells + 10)
+    $script:OqgV381ProgressRow = $Row
+    $script:OqgV381ProgressEndX = $end
+    $script:OqgV37ProgressEndX = $end
+    $script:OqgV381SentenceActive = $false
+    Clear-OqgV39BootTextSpan -Row $Row -EndX $end
+    & $script:OqgV39PreviousProgressWriter -Row $Row -Percent $Percent -Label $Label
+    # Keep exact final width, as calculated by the existing v37 writer.
+    if ([int]$script:OqgV37ProgressEndX -gt 0) {
+        $script:OqgV381ProgressEndX=[int]$script:OqgV37ProgressEndX
+        Protect-OqgV381Region -Row $Row -StartX 0 -EndX ([int]$script:OqgV381ProgressEndX)
+    }
+}
+
+function Write-GradientFixedLineV56 {
+    param(
+        [AllowEmptyString()][string]$Text='',
+        [object[]]$StartRgb=$script:GradientBlueStart,
+        [object[]]$EndRgb=$script:GradientBlueEnd,
+        [switch]$Bold
+    )
+    $isBootSentence=($Text -ceq '  Boot complete. Press ENTER to continue to identity selection.' -and
+        $null -ne $script:OqgV24Transition -and
+        [string]$script:OqgV24Transition.Mode -eq 'Boot' -and
+        [int]$script:OqgV381ProgressRow -ge 0)
+    if ($isBootSentence) {
+        $row=[int]$script:OqgV381ProgressRow+2
+        $script:OqgV381SentenceActive=$true
+        $script:OqgV381SentenceWidth=$Text.Length
+        Clear-OqgV39BootTextSpan -Row $row -EndX $Text.Length
+    }
+    & $script:OqgV39PreviousGradientWriter -Text $Text -StartRgb $StartRgb -EndRgb $EndRgb -Bold:$Bold
+    if ($isBootSentence) {
+        Protect-OqgV381Region -Row $row -StartX 0 -EndX $Text.Length
+    }
+}
+
+
+# OQG-BOOT-PROGRESS-MODE-BRIDGE-V40
+# UI-only fix: the v31 boot screen uses Exit-mode rain, but v38/v39 protect
+# the progress sentence only when Mode == Boot. Make the REAL boot screen
+# report Boot mode, while using the foreground mask (not the old rectangles).
+# Do not modify crypto, keyring, config, NMS, menu or the farewell screen.
+$script:OqgV40OriginalBootStart = (Get-Command Start-OqgV31BootRain -CommandType Function).ScriptBlock
+$script:OqgV40OriginalCellTest = (Get-Command Test-OqgTransitionCellV24 -CommandType Function).ScriptBlock
+
+function Start-OqgV31BootRain {
+    param([int]$LogoRows = 21, [int]$LogoWidth = 130)
+    # Start the already-working v31 rain exactly as before. Its first frame
+    # may use Exit mode; the foreground has not yet been drawn at that point.
+    & $script:OqgV40OriginalBootStart -LogoRows $LogoRows -LogoWidth $LogoWidth
+    $state = $script:OqgV24Transition
+    if ($null -ne $state -and $null -ne $state.Foreground -and
+        $state.Foreground.Length -eq ([int]$state.Width * [int]$state.Height)) {
+        # Now v38.1/v39 guards recognize the progress row and sentence.
+        $state.Mode = 'Boot'
+    }
+}
+
+function Test-OqgTransitionCellV24 {
+    param([int]$X, [int]$Y, $State)
+    if ($null -ne $State -and [string]$State.Mode -eq 'Boot' -and
+        $null -ne $State.Foreground) {
+        # Use the exact foreground occupancy grid from the v31 compositor.
+        # Do NOT fall back to the old LogoRows x LogoWidth rectangle.
+        $width = [int]$State.Width
+        $height = [int]$State.Height
+        if ($X -le 1 -or $X -ge ($width - 2) -or
+            $Y -le 0 -or $Y -ge ($height - 2)) { return $false }
+        if ($State.Foreground.Length -ne ($width * $height)) { return $false }
+
+        return [bool]$State.Foreground[($Y * $width) + $X]
+    }
+    # Identity + goodbye continue through the existing v39 renderer.
+    return [bool](& $script:OqgV40OriginalCellTest -X $X -Y $Y -State $State)
+}
+
+
+# OQG-BOOT-FOREGROUND-COMPOSITOR-V41
+# Draw-order reconciliation. These wrappers register the actual boot UI cells
+# in the existing transition's foreground mask and its persistent glyph set.
+# No crypto, menu, NMS or configuration functions are replaced.
+
+$script:OqgV41PreviousBootBox = (Get-Command Write-BootMenuBoxLineV67 -CommandType Function -ErrorAction Stop).ScriptBlock
+$script:OqgV41PreviousGradient = (Get-Command Write-GradientFixedLineV56 -CommandType Function -ErrorAction Stop).ScriptBlock
+$script:OqgV41ProgressRow = -1
+$script:OqgV41BootSentence = '  Boot complete. Press ENTER to continue to identity selection.'
+
+function Set-OqgV41BootForeground {
+    param(
+        [int]$Row,
+        [int]$X = 0,
+        [AllowEmptyString()][string]$Text = '',
+        [switch]$ProtectSpaces,
+        [switch]$ClearStale
+    )
+    $s = $script:OqgV24Transition
+    if ($null -eq $s -or $null -eq $s.Foreground) { return }
+    $w = [int]$s.Width
+    $h = [int]$s.Height
+    if ($w -lt 2 -or $h -lt 2 -or $s.Foreground.Length -ne ($w * $h)) { return }
+    if ($Row -lt 1 -or $Row -ge ($h - 2)) { return }
+    if ($null -eq $script:OqgV31BootGlyphs) {
+        $script:OqgV31BootGlyphs = New-Object 'System.Collections.Generic.HashSet[string]'
+    }
+    for ($i=0; $i -lt $Text.Length; $i++) {
+        $px=$X+$i
+        if ($px -lt 0 -or $px -ge ($w-1)) { continue }
+        if (-not $ProtectSpaces -and [char]::IsWhiteSpace($Text[$i])) { continue }
+        $s.Foreground[($Row*$w)+$px] = $false
+        $key='{0},{1}' -f $px,$Row
+        [void]$script:OqgV31BootGlyphs.Add($key)
+        if ($null -ne $s.Previous -and $s.Previous.ContainsKey($key)) {
+            [void]$s.Previous.Remove($key)
+        }
+    }
+    if ($ClearStale -and $Text.Length -gt 0) {
+        # Only the exact text span is cleared. No wide row padding or black slab.
+        $from=[Math]::Max(0,$X)
+        $until=[Math]::Min(($w-2),$X+$Text.Length)
+        if ($until -gt $from) {
+            try {
+                $savedX=[int][Console]::CursorLeft
+                $savedY=[int][Console]::CursorTop
+                $esc=[string][char]27
+                [Console]::Write($esc+'['+($Row+1)+';'+($from+1)+'H'+$esc+'[0m'+(' '*($until-$from))+$esc+'['+($savedY+1)+';'+($savedX+1)+'H')
+            } catch { }
+        }
+    }
+}
+
+function Write-BootMenuBoxLineV67 {
+    param(
+        [AllowEmptyString()][string]$Label = '',
+        [AllowEmptyString()][string]$Value = '',
+        [int]$Width = 96,
+        [int]$LabelWidth = 17,
+        [switch]$Highlight
+    )
+    $y=-1
+    try { $y=[Console]::CursorTop-[Console]::WindowTop } catch { }
+    & $script:OqgV41PreviousBootBox -Label $Label -Value $Value -Width $Width -LabelWidth $LabelWidth -Highlight:$Highlight
+    if ($y -lt 1) { return }
+    $inner = [Math]::Max(20,$Width-6)
+    $maxValue = [Math]::Max(8,$inner-$LabelWidth-3)
+    $labelString = Fit-V57 -Text $Label -Width $LabelWidth
+    $valueString = Fit-V57 -Text $Value -Width $maxValue
+    $plainUsed = $LabelWidth+3+$maxValue
+    $padding = if ($plainUsed -lt $inner) { ' '*($inner-$plainUsed) } else { '' }
+    $rowText = '  │ '+$labelString+' │ '+$valueString+$padding+' │'
+    Set-OqgV41BootForeground -Row $y -X 2 -Text '│'
+    Set-OqgV41BootForeground -Row $y -X 4 -Text ($labelString.TrimEnd()) -ProtectSpaces
+    Set-OqgV41BootForeground -Row $y -X (5+$LabelWidth) -Text '│'
+    Set-OqgV41BootForeground -Row $y -X (7+$LabelWidth) -Text ($valueString.TrimEnd()) -ProtectSpaces
+    # Protect the final right-hand border, but NOT the empty space before it.
+    Set-OqgV41BootForeground -Row $y -X ($rowText.Length-1) -Text '│'
+    # Top boundary was drawn by Write-Host immediately before the first row.
+    if ($Label -ceq 'BOOT MENU') {
+        Set-OqgV41BootForeground -Row ($y-1) -Text ('  ┌'+('─'*[Math]::Max(0,($Width-4)))+'┐')
+    }
+}
+
+function Write-BootProgressAtV57 {
+    param([int]$Row,[int]$Percent,[string]$Label)
+    $width = [Math]::Max(1,[Console]::WindowWidth - 1)
+    $labelWidth = [Math]::Min(30,[Math]::Max(1,$width - 23))
+    $cells = [Math]::Min(54,[Math]::Max(10,$width - $labelWidth - 13))
+    $field = Fit-V57 -Text $Label -Width $labelWidth
+    $segments = @(New-GradientSegments -Text ("  " + $field + " ") -StartRgb $script:GradientLabelStart -EndRgb $script:GradientBlueEnd -Bold)
+    $segments += @(New-ProgressBarSegmentsV54 -Percent $Percent -Cells $cells)
+
+    $esc = [string][char]27
+    $screenRow = $Row - [Console]::WindowTop
+    if ($screenRow -lt 0 -or $screenRow -ge [Console]::WindowHeight) { return }
+    $frame = New-Object System.Text.StringBuilder
+    [void]$frame.Append($esc + '7' + $esc + '[' + ($screenRow+1) + ';1H')
+    $used = 0
+    foreach ($seg in $segments) {
+        $count = [Math]::Min(([string]$seg.Text).Length,$width - $used)
+        if ($count -le 0) { break }
+        [void]$frame.Append($esc + '[0m')
+        if ($seg.Bold) { [void]$frame.Append($esc + '[1m') }
+        [void]$frame.Append((Get-AnsiStyleCode -Color $seg.Color))
+        [void]$frame.Append(([string]$seg.Text).Substring(0,$count))
+        $used += $count
+    }
+    [void]$frame.Append($esc + '[0m' + $esc + '8')
+    $script:OqgV41ProgressRow = $Row
+    $script:OqgV381ProgressRow = $screenRow
+    $script:OqgV381ProgressEndX = $used
+    $script:OqgV37ProgressEndX = $used
+    $state=$script:OqgV24Transition
+    if ($null -ne $state -and $screenRow -ge 0 -and $screenRow -lt $state.Height) {
+        # Reopen the padding as soon as the next stage has a shorter label.
+        $barStart=3+$labelWidth
+        for ($x=0; $x -lt [Math]::Min($used,$state.Width); $x++) {
+            $isLabel=($x -ge 2 -and $x -lt (2+[Math]::Min($Label.Length,$labelWidth)))
+            $state.Foreground[$screenRow*$state.Width+$x]=(-not $isLabel -and $x -lt $barStart)
+            [void]$state.Previous.Remove(('{0},{1}' -f $x,$screenRow))
+        }
+    }
+    [Console]::Write($frame.ToString())
+}
+
+function Write-GradientFixedLineV56 {
+    param(
+        [AllowEmptyString()][string]$Text='',
+        [object[]]$StartRgb=$script:GradientBlueStart,
+        [object[]]$EndRgb=$script:GradientBlueEnd,
+        [switch]$Bold
+    )
+    $isBootCopy=($Text -ceq $script:OqgV41BootSentence -and
+        [int]$script:OqgV41ProgressRow -ge 0 -and
+        $null -ne $script:OqgV24Transition)
+    if ($isBootCopy) {
+        # The caller moves to progressRow + 2 before printing the completion line.
+        $row=[int]$script:OqgV41ProgressRow+2
+        Set-OqgV41BootForeground -Row $row -Text $Text -ProtectSpaces -ClearStale
+    }
+    & $script:OqgV41PreviousGradient -Text $Text -StartRgb $StartRgb -EndRgb $EndRgb -Bold:$Bold
+    if ($isBootCopy) { Set-OqgV41BootForeground -Row $row -Text $Text -ProtectSpaces }
+}
+
 try {
     Install-QuitGuard
     Initialize-ActiveIdentityV44
+    Wait-OqgIdentityScreen -Seconds 10
     Main-Menu
 } catch {
     Write-Host ""
