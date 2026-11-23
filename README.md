@@ -11,18 +11,18 @@
 </p>
 
 ## Live Demo
-![LiveDemo](./assets/OpenQuantumGuard-Demo.gif)
-
-## Command-line interface (CLI)
-OpenPGP Quantum Guard now includes a companion command-line interface (CLI) alongside its interactive PowerShell terminal interface (TUI). 
-The startup and keyboard instructions below apply to the TUI.
-<img width="760" height="745" alt="image" src="https://github.com/user-attachments/assets/7b62b6c0-e266-4f93-962c-c740e1d99eca" />
+<img src="./assets/OpenQuantumGuard-Demo.gif" alt="Live Demo of the OpenPGP Quantum Guard" width="800" />
 
 ## TUI console boot
 <img src="https://github.com/RandomLinoge/OpenPGP-Quantum-Guard/blob/main/src/QuantumGuard-Main.jpg">
 As startup advances, the stage label and progress bar update together on one line. Rain continues through the open space around the menu and between the label and the bar. When a shorter label replaces a longer one, the freed columns return to the animation. On compatible terminal dimensions, the falling streams carry their positions into the identity screen.
 
 At ready, press Enter to continue to identity selection. To advance automatically, set "BootWaitForEnter": false in your local configuration.
+
+## Command-line interface (CLI)
+OpenPGP Quantum Guard now includes a companion command-line interface (CLI) alongside its interactive PowerShell terminal interface (TUI). 
+The startup and keyboard instructions below apply to the TUI.
+<img width="760" height="745" alt="image" src="https://github.com/user-attachments/assets/7b62b6c0-e266-4f93-962c-c740e1d99eca" />
 
 ## Cryptographic scope
 - Primary identity: Ed25519 for certification and signing.
