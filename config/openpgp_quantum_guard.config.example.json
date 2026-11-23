@@ -1,5 +1,5 @@
 {
-    "Version":  "v72",
+    "Version":  "v67",
     "PgpFolder": "data",
     "OutputFolder": "output",
     "GpgPath": "",
@@ -13,7 +13,7 @@
     "DefaultKeyExpiry":  "2y",
     "AutoTrustGeneratedKeys":  true,
     "KeySelectableRequiresUltimateTrust":  false,
-    "EnableLiveNmsMenu":  false,
+    "EnableLiveNmsMenu":  true,
     "EnableNoMoreSecretsEffect":  true,
     "BootMenuTitle":  "OpenPGP Quantum Guard",
     "BootMenuSubtitle":  "PQC-enabled OpenPGP operations",
