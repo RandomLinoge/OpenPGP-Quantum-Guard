@@ -31,3 +31,13 @@
 - Explicit confirmation for secret exports.
 - Repository-relative defaults and ignored local configuration.
 - Negative tests for private material and machine-specific paths.
+
+## Console and automation
+
+| Surface | Failure mode | Mitigation or verification |
+|---|---|---|
+| Interactive prompts | A control key submits a default answer or terminates the operator session. | Exercise the subkey confirmation and multiline prompts separately. Verify that cancellation discards partial input before GnuPG runs. |
+| CLI and CI runners | Command arguments, transcripts, logs, or uploaded artifacts disclose plaintext, identity details, or local paths. | Use a disposable GnuPG home for tests. Review both output streams and retained artifacts. Keep secrets out of command arguments. |
+| Release contents | A local keyring, backup script, recording, or test export is staged with the release. | Inspect the exact staged paths and outgoing commits, including binary assets and test fixtures. |
+
+The NMS animation, rain, and on-screen meters are presentation features. Evaluate recipient selection and PQC enforcement from the key selection and GnuPG operation results.
