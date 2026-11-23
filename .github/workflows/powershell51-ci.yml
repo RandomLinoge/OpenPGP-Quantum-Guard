@@ -1,0 +1,171 @@
+name: PowerShell 5.1 CI/CD
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ps51-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  validate:
+    name: PS 5.1 syntax, lint and tests
+    runs-on: windows-2022
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Confirm Windows PowerShell 5.1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSVersionTable.PSVersion.ToString()
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+            throw 'This workflow requires Windows PowerShell 5.1.'
+          }
+
+      - name: Parse PowerShell source
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(Get-ChildItem -LiteralPath . -Recurse -File | Where-Object {
+            $_.Extension -in @('.ps1', '.psm1', '.psd1') -and
+            $_.FullName -notmatch '[\\/](\.git|\.github|vendor|third_party|node_modules)[\\/]'
+          })
+          if ($files.Count -eq 0) { throw 'No PowerShell source files found.' }
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName, [ref]$tokens, [ref]$errors
+            )
+            foreach ($e in $errors) { Write-Host "PARSE ERROR $($file.FullName): $e" }
+            if ($errors.Count -gt 0) { throw "Invalid PowerShell syntax: $($file.FullName)" }
+          }
+          Write-Host "Parsed $($files.Count) PowerShell files successfully."
+
+      - name: Install analysis and test modules
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -ErrorAction Stop
+          Install-Module Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
+
+      - name: PSScriptAnalyzer error gate
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module PSScriptAnalyzer -ErrorAction Stop
+          $paths = @(Get-ChildItem -LiteralPath . -Recurse -File | Where-Object {
+            $_.Extension -in @('.ps1', '.psm1') -and
+            $_.FullName -notmatch '[\\/](\.git|\.github|vendor|third_party|node_modules)[\\/]'
+          })
+          $findings = @($paths | ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Severity Error })
+          $findings | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize
+          if ($findings.Count -gt 0) { throw "$($findings.Count) PSScriptAnalyzer errors found." }
+          Write-Host 'No PSScriptAnalyzer Error findings.'
+
+      - name: Run Pester tests when present
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module Pester -MinimumVersion 5.0 -ErrorAction Stop
+          $tests = @(Get-ChildItem -LiteralPath . -Recurse -File -Filter '*.Tests.ps1' | Where-Object {
+            $_.FullName -notmatch '[\\/](\.git|vendor|third_party|node_modules)[\\/]'
+          })
+          if ($tests.Count -eq 0) {
+            Write-Warning 'No *.Tests.ps1 files found. Tests skipped; add Pester tests before treating this as a complete quality gate.'
+          } else {
+            $config = New-PesterConfiguration
+            $config.Run.Path = @($tests | ForEach-Object FullName)
+            $config.Run.PassThru = $true
+            $config.Output.Verbosity = 'Detailed'
+            $config.TestResult.Enabled = $true
+            $config.TestResult.OutputPath = 'pester-results.xml'
+            $config.TestResult.OutputFormat = 'NUnitXml'
+            $result = Invoke-Pester -Configuration $config
+            if ($result.FailedCount -gt 0 -or $result.Result -ne 'Passed') {
+              throw "Pester reported $($result.FailedCount) failed tests."
+            }
+          }
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pester-results
+          path: pester-results.xml
+          if-no-files-found: ignore
+
+  package:
+    name: Create verified source bundle
+    needs: validate
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-2022
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build ZIP and SHA-256 checksum
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = '${{ github.event.repository.name }}'
+          $tag = '${{ github.ref_name }}'
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $stage = Join-Path $env:RUNNER_TEMP 'ps51-package'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          $tracked = @(git ls-files)
+          foreach ($item in $tracked) {
+            if ($item -match '^\.github/' -or $item -match '^tests/' -or $item -match '^\.git/') { continue }
+            $destination = Join-Path $stage $item
+            $parent = Split-Path -Parent $destination
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+            Copy-Item -LiteralPath $item -Destination $destination -Force
+          }
+          $zip = Join-Path 'dist' "$name-$tag.zip"
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name-$tag.zip" | Set-Content -Path (Join-Path 'dist' 'SHA256SUMS.txt') -Encoding ASCII
+          Write-Host "Created $zip with SHA256 $hash"
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes
