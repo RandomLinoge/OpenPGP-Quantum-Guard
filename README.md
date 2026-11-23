@@ -24,8 +24,6 @@ As startup advances, the stage label and progress bar update together on one lin
 
 At ready, press Enter to continue to identity selection. To advance automatically, set "BootWaitForEnter": false in your local configuration.
 
-
-
 ## Cryptographic scope
 - Primary identity: Ed25519 for certification and signing.
 - Strongest local PQC profile: ky1024_cv448, combining ML-KEM-1024 with X448 through GnuPG's composite OpenPGP implementation.
@@ -51,8 +49,11 @@ GnuPG performs every cryptographic operation. This project does not implement ML
 & '.\src\OpenPGP-Quantum-Guard.ps1'
 ```
 
-The script creates repository-relative data, output, and optional logos folders. Real passphrases must never be written into the configuration. GnuPG pinentry handles private-key unlocking.
-<img width="2529" height="1339" alt="image" src="https://github.com/user-attachments/assets/cc38ca03-531f-44d6-9bcd-ead151c92101" />
+The script creates repository-relative data, output, and optional logos folders. 
+Real passphrases must never be written into the configuration. GnuPG pinentry handles private-key unlocking.
+
+## OpenPGP Quantum Guard - Main Menu
+<img width="2929" height="1739" alt="image" src="https://github.com/user-attachments/assets/cc38ca03-531f-44d6-9bcd-ead151c92101" />
 
 ## Safe first test
 1. Open Setup doctor and verify the GnuPG executable, version, home, active identity, and PQC hints.
