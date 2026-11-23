@@ -13,12 +13,17 @@
 ## OpenPGP Quantum Guard
 OpenPGP Quantum Guard is an experimental Windows PowerShell operator console for GnuPG file and text protection. It supports classic OpenPGP profiles and GnuPG 2.5+ composite Kyber/ML-KEM encryption subkeys.
 
-## Startup console
-<img width="1276" height="766" alt="image" src="https://github.com/user-attachments/assets/efc48b63-ca32-4be3-a9a6-1e7f5c599c13" />
+## Command-line interface (CLI)
+OpenPGP Quantum Guard now includes a companion command-line interface (CLI) alongside its interactive PowerShell terminal interface (TUI). 
+The startup and keyboard instructions below apply to the TUI.
+<img width="760" height="745" alt="image" src="https://github.com/user-attachments/assets/7b62b6c0-e266-4f93-962c-c740e1d99eca" />
 
+## TUI console boot
+<img width="1276" height="766" alt="image" src="https://github.com/user-attachments/assets/efc48b63-ca32-4be3-a9a6-1e7f5c599c13" />
 As startup advances, the stage label and progress bar update together on one line. Rain continues through the open space around the menu and between the label and the bar. When a shorter label replaces a longer one, the freed columns return to the animation. On compatible terminal dimensions, the falling streams carry their positions into the identity screen.
 
 At ready, press Enter to continue to identity selection. To advance automatically, set "BootWaitForEnter": false in your local configuration.
+
 ## Cryptographic scope
 - Primary identity: Ed25519 for certification and signing.
 - Strongest local PQC profile: ky1024_cv448, combining ML-KEM-1024 with X448 through GnuPG's composite OpenPGP implementation.
@@ -26,6 +31,7 @@ At ready, press Enter to continue to identity selection. To advance automaticall
 - Compatibility profile: cv25519.
 - Optional enforcement: RequirePqcEncryption adds GnuPG's --require-pqc-encryption policy to encryption operations.
 GnuPG performs every cryptographic operation. This project does not implement ML-KEM or OpenPGP packet cryptography itself.
+
 ## Configure before testing
 1. Install a GnuPG 2.5+ build that exposes Kyber/ML-KEM support.
 2. Copy config/openpgp_quantum_guard.config.example.json to src/openpgp_quantum_guard.config.json.
@@ -51,6 +57,7 @@ The script creates repository-relative data, output, and optional logos folders.
 3. Encrypt a small test file using ky1024_cv448.
 4. Decrypt it and compare its SHA-256 hash with the original.
 5. Set RequirePqcEncryption to true and confirm encryption to a classic-only recipient fails.
+
 ## Repository layout
 - src/: application script and local runtime configuration location.
 - config/: reviewed example configuration.
