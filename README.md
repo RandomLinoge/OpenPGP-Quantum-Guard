@@ -10,6 +10,49 @@
   </p>
 </p>
 
+GnuPG performs the cryptographic operations. Quantum Guard provides a Windows PowerShell terminal interface and companion CLI for selecting keys, inspecting capabilities, and protecting files or text. This research preview has not received an independent security audit.
+
+## Quick start on Windows
+
+Install a GnuPG 2.5+ build with Kyber/ML-KEM support and open PowerShell at the repository root. Run:
+
+```powershell
+gpg.exe --version
+if (!(Test-Path '.\src\openpgp_quantum_guard.config.json')) {
+    Copy-Item '.\config\openpgp_quantum_guard.config.example.json' '.\src\openpgp_quantum_guard.config.json'
+}
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\src\OpenPGP-Quantum-Guard.ps1
+```
+
+At **ready**, press **Enter**. Select a disposable identity if prompted, then open **Setup doctor** from the main menu. Look for **OK** beside **GnuPG path** and **GnuPG version**. If the program cannot locate GnuPG, set `GpgPath` in your local configuration to the full path to `gpg.exe`. For a dedicated lab keyring, set `GpgHome` before launching. An empty value uses GnuPG’s default home.
+
+![Setup Doctor reporting OK for the executable, GnuPG 2.5.24, and the PQC capability hint](assets/setup-doctor.png)
+
+*Setup Doctor excerpt from Windows. The PQC hint checks the version banner. Key selection and an encryption round trip are separate checks.*
+
+**Try the CLI:** run `& .\src\OpenPGP-Quantum-Guard.Cli.ps1 -Help` from the same directory. See the [CLI guide](docs/CLI.md) for commands and examples.
+
+## Safe first test
+
+1. In a disposable GnuPG home, select a test identity with a hybrid encryption subkey and enable `RequirePqcEncryption`.
+2. Encrypt a small file, decrypt it to a different path, and compare both files with `Get-FileHash -Algorithm SHA256`. The hashes should match.
+3. With a classical-only test recipient, confirm encryption succeeds when PQC enforcement is off. Enable enforcement and repeat. The CLI should reject the recipient with exit code `4` and leave no ciphertext at the requested output path.
+
+**Verified lab result:** At commit `80768f1`, the CLI help, static, and integration tests passed with GnuPG 2.5.24 and libgcrypt 1.12.4. The integration run used a `ky768_cv25519` hybrid subkey and an RSA classical control. It verified the SHA-256 round trip, policy rejection, overwrite protection, and invalid-fingerprint handling.
+
+## Cryptographic scope
+- Primary identity: Ed25519 for certification and signing.
+- Strongest local PQC profile: ky1024_cv448, combining ML-KEM-1024 with X448 through GnuPG's composite OpenPGP implementation.
+- Balanced PQC profiles: ky768_cv25519 and ky768_bp256.
+- Compatibility profile: cv25519.
+- Optional enforcement: RequirePqcEncryption adds GnuPG's --require-pqc-encryption policy to encryption operations.
+
+GnuPG performs every cryptographic operation. This project does not implement ML-KEM or OpenPGP packet cryptography itself.
+
+## Local configuration
+
+Edit `src/openpgp_quantum_guard.config.json`. Leave the fingerprint empty for interactive selection or set a full primary fingerprint and expected UID hint. GnuPG pinentry handles passphrases. Store passphrases and private keys outside the configuration file. See the [configuration guide](config/README.md).
+
 ## Live Demo
 <img src="./assets/OpenQuantumGuard-Demo.gif" alt="Live Demo of the OpenPGP Quantum Guard" width="1000" />
 
@@ -24,54 +67,18 @@ As startup advances, the stage label and progress bar update together on one lin
 
 At ready, press Enter to continue to identity selection. To advance automatically, set "BootWaitForEnter": false in your local configuration.
 
-## Cryptographic scope
-- Primary identity: Ed25519 for certification and signing.
-- Strongest local PQC profile: ky1024_cv448, combining ML-KEM-1024 with X448 through GnuPG's composite OpenPGP implementation.
-- Balanced PQC profiles: ky768_cv25519 and ky768_bp256.
-- Compatibility profile: cv25519.
-- Optional enforcement: RequirePqcEncryption adds GnuPG's --require-pqc-encryption policy to encryption operations.
-GnuPG performs every cryptographic operation. This project does not implement ML-KEM or OpenPGP packet cryptography itself.
-
-## Configure before testing
-1. Install a GnuPG 2.5+ build that exposes Kyber/ML-KEM support.
-2. Copy config/openpgp_quantum_guard.config.example.json to src/openpgp_quantum_guard.config.json.
-3. Edit only that copied configuration file:
-   - Leave GpgPath empty to use gpg.exe from PATH, or set its full path.
-   - Leave GpgHome empty to use the default GnuPG home, or set a dedicated lab home.
-   - Replace <OPENPGP_FINGERPRINT> with a full 40-hex-character primary fingerprint. You may leave it empty on first run and select a key interactively.
-   - Replace the example UID hint with the UID you expect to see.
-   - Keep RequirePqcEncryption set to true for PQC-only encryption tests.
-4. Run:
-
-```powershell
-& '.\Install-Oqg-Boot-Foreground-v41.ps1' -PreviewOnly
-& '.\Install-Oqg-Boot-Foreground-v41.ps1'
-& '.\src\OpenPGP-Quantum-Guard.ps1'
-```
-
-The script creates repository-relative data, output, and optional logos folders. 
-Real passphrases must never be written into the configuration. GnuPG pinentry handles private-key unlocking.
-
 ## OpenPGP Quantum Guard - Main Menu
 <img width="2929" height="1739" alt="image" src="https://github.com/user-attachments/assets/cc38ca03-531f-44d6-9bcd-ead151c92101" />
 
-## Safe first test
-1. Open Setup doctor and verify the GnuPG executable, version, home, active identity, and PQC hints.
-2. Generate or select a disposable lab key.
-3. Encrypt a small test file using ky1024_cv448.
-4. Decrypt it and compare its SHA-256 hash with the original.
-5. Set RequirePqcEncryption to true and confirm encryption to a classic-only recipient fails.
-
 ## Repository layout
-- src/: application script and local runtime configuration location.
-- config/: reviewed example configuration.
-- tests/: parser, privacy, and configuration checks.
-- docs/: threat model and compatibility boundaries.
-## Status
-Peer review is needed.
-## License
-Apache License 2.0.
-## Open Source
-This project is open-source software. Its source code is publicly available for inspection, research, testing, modification, and contribution under the terms provided in the repository's LICENSE file.
 
-**Known limitations:** This package has not been run under native Windows PowerShell 5.1/Windows Terminal. Static and simulated checks are not equivalent to checking a live terminal recording. It is also not a general-purpose layering solution; it protects the boot elements named above while preserving the existing rain engine.
+- `src/` contains the TUI, CLI, and runtime artwork.
+- `config/` contains the example configuration.
+- `tests/` contains parser, privacy, CLI help, and integration checks.
+- [Threat model](THREAT_MODEL.md) · [Compatibility](COMPATIBILITY.md) · [Security policy](SECURITY.md)
+
+## Status and license
+
+Peer review is welcome. The CLI results above cover the stated build and fixtures. Interactive Windows Terminal behavior and interoperability with other OpenPGP implementations require separate verification.
+
+Open source under the [Apache License 2.0](LICENSE). See [Contributing](CONTRIBUTING.md) to report reproducible issues or propose improvements.
