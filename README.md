@@ -14,23 +14,36 @@ GnuPG performs the cryptographic operations. Quantum Guard provides a Windows Po
 
 ## Quick start on Windows
 
-Install a GnuPG 2.5+ build with Kyber/ML-KEM support and open PowerShell at the repository root. Run:
+Install a PQC-capable build of GnuPG 2.5 or later, then open PowerShell in the repository root.
+
+### 1. Prepare your local configuration
 
 ```powershell
-gpg.exe --version
-if (!(Test-Path '.\src\openpgp_quantum_guard.config.json')) {
-    Copy-Item '.\config\openpgp_quantum_guard.config.example.json' '.\src\openpgp_quantum_guard.config.json'
+$configPath = '.\src\openpgp_quantum_guard.config.json'
+if (!(Test-Path -LiteralPath $configPath)) {
+    Copy-Item -LiteralPath '.\config\openpgp_quantum_guard.config.example.json' -Destination $configPath
 }
+```
+
+For a dedicated lab keyring, set `GpgHome` in your local configuration **before launching**. Leave it empty to use your default GnuPG home.
+
+### 2. Launch Quantum Guard
+
+```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\src\OpenPGP-Quantum-Guard.ps1
 ```
 
-At **ready**, press **Enter**. Select a disposable identity if prompted, then open **Setup doctor** from the main menu. Look for **OK** beside **GnuPG path** and **GnuPG version**. If the program cannot locate GnuPG, set `GpgPath` in your local configuration to the full path to `gpg.exe`. For a dedicated lab keyring, set `GpgHome` before launching. An empty value uses GnuPG’s default home.
+When the boot screen displays `ready`, press **Enter**. Select a disposable test identity if prompted, then open **Setup Doctor** from the main menu.
 
-![Setup Doctor reporting OK for the executable, GnuPG 2.5.24, and the PQC capability hint](assets/setup-doctor.png)
+### 3. Verify your setup
 
-*Setup Doctor excerpt from Windows. The PQC hint checks the version banner. Key selection and an encryption round trip are separate checks.*
+Look for `[OK]` beside **GnuPG path** and **GnuPG version**. Check that the displayed version matches the build you intended to use.
 
-**Try the CLI:** run `& .\src\OpenPGP-Quantum-Guard.Cli.ps1 -Help` from the same directory. See the [CLI guide](docs/CLI.md) for commands and examples.
+![Setup Doctor showing the detected GnuPG executable and version](assets/setup-doctor.png)
+
+If **GnuPG path** shows `[FAIL]`, set `GpgPath` in your local configuration to the full path to `gpg.exe`, then relaunch Quantum Guard.
+
+Once both checks pass, continue to the [safe first test](#safe-first-test) to verify encryption and decryption with a disposable key.
 
 ## Safe first test
 
